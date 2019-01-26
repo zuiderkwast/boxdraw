@@ -1,0 +1,838 @@
+#!/usr/bin/perl
+
+# boxdraw - a plain text drawing program for the terminal
+# Copyright (C) 2019  Viktor Söderqvist
+#
+# This program is free software: you can redistribute it and/or modify
+# it under the terms of the GNU General Public License as published by
+# the Free Software Foundation, either version 3 of the License, or
+# (at your option) any later version.
+#
+# This program is distributed in the hope that it will be useful,
+# but WITHOUT ANY WARRANTY; without even the implied warranty of
+# MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+# GNU General Public License for more details.
+#
+# You should have received a copy of the GNU General Public License
+# along with this program.  If not, see <http://www.gnu.org/licenses/>.
+
+use strict;
+use warnings;
+use utf8;
+use 5.18.0;
+use open qw(:std :utf8);
+
+my ($cols, $lines);       # size of terminal
+my ($x, $y) = (1, 1);     # cursor coordinates
+my ($selx, $sely);        # selection starting point or (under, undef)
+my ($y1, $x1, $y2, $x2) = (1,1,1,1);  # selection rectangle
+my $sticky_selection = 0; # when on, arrow keys extend selection
+my $message = "h = help, q = quit"; # message to display in status bar
+my $rows = [];            # text lines without \n
+my $debug = 0;            # toggled by -d or --debug
+my $filename;             #
+my $selector = undef;     # Visible 'stroke' or 'character' selector
+my $help = 0;             # Help pane toggled with 'h'
+#open my $tty, "<+", "/dev/tty";
+
+# TODO: Read from /dev/tty instead of STDIN.
+#       Use STDIN for initial content.
+die "STDIN is not a tty" unless -t STDIN;
+# TODO: Write to /dev/tty instead of STDOUT.
+#       Write content to STDOUT in some situation.
+die "STDOUT is not a tty" unless -t STDOUT;
+
+# Read ARGV
+while ($_ = shift) {
+    if (/^-d|--debug$/) { $debug = 1; next };
+    if (/^--$/)         { $filename = shift; last };
+    if (/^[^-]/)        { $filename = $_; next };
+    die "Unrecognized option: $_";
+}
+
+sub debug {
+    print STDERR @_ if $debug;
+}
+
+sub winch {
+    my $stty = `stty -F/dev/tty -a`;
+    $stty =~ /rows (\d+); columns (\d+)/ or die "Can't get terminal size";
+    $cols = int $2;
+    $lines = int $1;
+    #message($lines . "x" . $cols);
+    render();
+}
+use sigtrap 'handler', \&winch, 'WINCH';
+
+sub abort {
+    system "stty sane";
+    die "aborted";
+}
+use sigtrap 'handler', \&abort, 'normal-signals';
+
+# --- rendering ---
+
+my $selected_stroke = 0;
+my $stroke_buttons = [
+    ['┌─┐',
+     '└─┘', '-', 'single'],
+    ['╭─╮',
+     '╰─╯', 'o', 'single-rounded'],
+    ['┏━┓',
+     '┗━┛', 'b', 'bold'],
+    ['╔═╗',
+     '╚═╝', '=', 'double'],
+    ['┌╌┐',
+     '└╌┘', '', 'single-bashed'],
+    ['╭╌╮',
+     '╰╌╯', '', 'single-bashed-rounded'],
+    ['┏╍┓',
+     '┗╍┛', '', 'bold-bashed'],
+    ['┌┄┐',
+     '└┄┘', '', 'single-dashed'],
+    ['╭┄╮',
+     '╰┄╯', '', 'single-dashed-rounded'],
+    ['┏┅┓',
+     '┗┅┛', '', 'bold-dashed'],
+    ['┌┈┐',
+     '└┈┘', '', 'single-dotted'],
+    ['╭┈╮',
+     '╰┈╯', '', 'single-dotted-rounded'],
+    ['┏┉┓',
+     '┗┉┛', '', 'bold-dotted'],
+];
+
+sub render_stroke_selector {
+    return if $lines < 4;
+    print "\e[", $lines - 3 , ";1H\e[42m";
+    printf "%-*s", $cols, "Stroke";
+    my $n = @$stroke_buttons;
+    for (my $line = 0; $line < 2; $line++) {
+        my $r = $lines - 2 + $line;
+        print "\e[$r;1H";
+        print "\e[42m";
+        # Print a line for each of the strokes
+        for (my $i = 0; $i < $n; $i++) {
+            # blue (selected) or green
+            print "\e[44m" if $i == $selected_stroke;
+            print $$stroke_buttons[$i][$line];
+            print "\e[42m" if $i == $selected_stroke;
+        }
+        # Print padding for the rest of the line
+        print " " x ($cols - 3 * $n);
+    }
+    print "\e[m"; # reset/normal
+}
+
+sub render {
+    # clear screen
+    print "\ec";
+
+    # contents
+    my $last_content_line = defined($selector) ? $lines - 4 : $lines - 1;
+
+    for (my $r = 1; $r <= $last_content_line; $r ++) {
+        my $str = defined $$rows[$r - 1] ? $$rows[$r - 1] : "";
+        if ($r >= $y1 && $r <= $y2) {
+            # Highlight selection (rectangle) with background color
+            # Pad $str with spaces so that it covers the selection
+            if (length($str) < $x2) {
+                $str .= " " x ($x2 - length($str));
+            }
+            print "\e[$r;1H",
+                  substr($str, 0, $x1 - 1), "\e[43m",             # yellow
+                  substr($str, $x1 - 1, $x2 - $x1 + 1), "\e[49m", # default
+                  substr($str, $x2);
+        } elsif ($str ne "") {
+            # No selection. Just print the line.
+            print "\e[$r;1H$str";
+        }
+    }
+
+    # Status bar
+    my $message_y = $lines;
+    if ($message ne "") {
+        my $stroke_ind = $$stroke_buttons[$selected_stroke][0];
+        my $padded_message = sprintf("%-*s", $cols, " $stroke_ind $message");
+        printf "\e[$message_y;1H\e[42m$padded_message\e[49m";
+    }
+
+    if (!defined $selector) {
+        # Set cursor position
+        print "\e[$y;${x}H";
+    } elsif ($selector eq 'stroke') {
+        render_stroke_selector();
+    }
+}
+
+# --- content manipulation ---
+
+sub get_char_at_yx {
+    my ($y, $x) = (@_);
+    $x--; $y--; # switch to 0-based index
+    return defined $$rows[$y] && length($$rows[$y]) > $x
+           ? substr($$rows[$y], $x, 1)
+           : " ";
+}
+
+sub set_str_at_yx {
+    # This function doesn't create trailing whitespace
+    my ($s, $y, $x) = (@_);
+    $x--; $y--; # switch to 0-based index
+    unless (defined $$rows[$y]) {
+        return if $s eq " ";
+        $$rows[$y] = "";
+    }
+    my $len = length $$rows[$y];
+    if ($x >= $len) {
+        return if $s eq " ";
+        my $pad = " " x ($x - $len);
+        $$rows[$y] .= $pad . $s;
+    } elsif ($s eq " " && $x + 1 == $len) {
+        # Overwrite the last character with space: Remove it and trim.
+        $$rows[$y] =~ s/ *.$//;
+    } else {
+        # Replace substr
+        substr($$rows[$y], $x, length($s), $s);
+    }
+}
+sub set_char {
+    my ($s) = (@_);
+    set_str_at_yx($s, $y, $x);
+}
+
+sub fill_selection {
+    my ($s) = (@_);
+    my $repeated_s = $s x (($x2 - $x1 + 1) / length($s));
+    for (my $r = $y1; $r <= $y2; $r++) {
+        set_str_at_yx($repeated_s, $r, $x1);
+    }
+    deselect();
+}
+
+# y1, x1, y2, x2 => (min y, min x, max y, max x)
+sub normalize_area {
+    my ($y1, $x1, $y2, $x2) = (@_);
+    ($x1, $x2) = $x1 <= $x2 ? ($x1, $x2) : ($x2, $x1);
+    ($y1, $y2) = $y1 <= $y2 ? ($y1, $y2) : ($y2, $y1);
+    return ($y1, $x1, $y2, $x2);
+}
+
+# Sets selection rectangle to the area between (sely,selx) and (y,x)
+sub update_selection {
+    if (defined $selx) {
+        # Selection exists
+        ($y1, $x1, $y2, $x2) = normalize_area($y, $x, $sely, $selx);
+    } else {
+        ## Set an empty selection
+        #$x1 = $y1 = 1;
+        #$x2 = $y2 = 0;
+        # Select 1x1 at cursor
+        $x1 = $x2 = $x;
+        $y1 = $y2 = $y;
+    }
+}
+
+sub deselect {
+    $selx = $sely = undef;
+    $sticky_selection = 0;
+    update_selection;
+}
+
+# order: ABCD (up, down, right, left)
+my %strokes = (
+    "single" => "╵╷╶╴",
+    "bold"   => "╹╻╺╸",
+    "double" => "║║══", # single direction missing
+);
+
+my %decomposed = (
+    "─" => "  ╶╴",
+    "━" => "  ╺╸",
+    "│" => "╵╷  ",
+    "┃" => "╹╻  ",
+    "┌" => " ╷╶ ",
+    "┍" => " ╷╺ ",
+    "┎" => " ╻╶ ",
+    "┏" => " ╻╺ ",
+    "┐" => " ╷ ╴",
+    "┑" => " ╷ ╸",
+    "┒" => " ╻ ╴",
+    "┓" => " ╻ ╸",
+    "└" => "╵ ╶ ",
+    "┕" => "╵ ╺ ",
+    "┖" => "╹ ╶ ",
+    "┗" => "╹ ╺ ",
+    "┘" => "╵  ╴",
+    "┙" => "╵  ╸",
+    "┚" => "╹  ╴",
+    "┛" => "╹  ╸",
+    "├" => "╵╷╶ ",
+    "┝" => "╵╷╺ ",
+    "┞" => "╹╷╶ ",
+    "┟" => "╵╻╶ ",
+    "┠" => "╹╻╶ ",
+    "┡" => "╹╷╺ ",
+    "┢" => "╵╻╺ ",
+    "┣" => "╹╻╺ ",
+    "┤" => "╵╷ ╴",
+    "┥" => "╵╷ ╸",
+    "┦" => "╹╷ ╴",
+    "┧" => "╵╻ ╴",
+    "┨" => "╹╻ ╴",
+    "┩" => "╹╷ ╸",
+    "┪" => "╵╻ ╸",
+    "┫" => "╹╻ ╸",
+    "┬" => " ╷╶╴",
+    "┭" => " ╷╶╸",
+    "┮" => " ╷╺╴",
+    "┯" => " ╷╺╸",
+    "┰" => " ╻╶╴",
+    "┱" => " ╻╶╸",
+    "┲" => " ╻╺╴",
+    "┳" => " ╻╺╸",
+    "┴" => "╵ ╶╴",
+    "┵" => "╵ ╶╸",
+    "┶" => "╵ ╺╴",
+    "┷" => "╵ ╺╸",
+    "┸" => "╹ ╶╴",
+    "┹" => "╹ ╶╸",
+    "┺" => "╹ ╺╴",
+    "┻" => "╹ ╺╸",
+    "┼" => "╵╷╶╴",
+    "┽" => "╵╷╶╸",
+    "┾" => "╵╷╺╴",
+    "┿" => "╵╷╺╸",
+    "╀" => "╹╷╶╴",
+    "╁" => "╵╻╶╴",
+    "╂" => "╹╻╶╴",
+    "╃" => "╹╷╶╸",
+    "╄" => "╹╷╺╴",
+    "╅" => "╵╻╶╸",
+    "╆" => "╵╻╺╴",
+    "╇" => "╹╷╺╸",
+    "╈" => "╵╻╺╸",
+    "╉" => "╹╻╶╸",
+    "╊" => "╹╻╺╴",
+    "╋" => "╹╻╺╸",
+    "═" => "  ══",
+    "║" => "║║  ",
+    "╒" => " ╷═ ",
+    "╓" => " ║╶ ",
+    "╔" => " ║═ ",
+    "╕" => " ╷ ═",
+    "╖" => " ║ ╴",
+    "╗" => " ║ ═",
+    "╘" => "╵ ═ ",
+    "╙" => "║ ╶ ",
+    "╚" => "║ ═ ",
+    "╛" => "╵  ═",
+    "╜" => "║  ╴",
+    "╝" => "║  ═",
+    "╞" => "╵╷═ ",
+    "╟" => "║║╶ ",
+    "╠" => "║║═ ",
+    "╡" => "╵╷ ═",
+    "╢" => "║║ ╴",
+    "╣" => "║║ ═",
+    "╤" => " ╷══",
+    "╥" => " ║╶╴",
+    "╦" => " ║══",
+    "╧" => "╵ ══",
+    "╨" => "║ ╶╴",
+    "╩" => "║ ══",
+    "╪" => "╵╷══",
+    "╫" => "║║╶╴",
+    "╬" => "║║══",
+    "╴" => "   ╴",
+    "╵" => "╵   ",
+    "╶" => "  ╶ ",
+    "╷" => " ╷  ",
+    "╸" => "   ╸",
+    "╹" => "╹   ",
+    "╺" => "  ╺ ",
+    "╻" => " ╻  ",
+    "╼" => "  ╺╴",
+    "╽" => "╵╻  ",
+    "╾" => "  ╶╸",
+    "╿" => "╹╷  ",
+    # dotted/dashed: ┄ ┅ ┆ ┇ ┈ ┉ ┊ ┋ ╌ ╍ ╎ ╏
+    # Diagonal: ╱ ╲ ╳
+    # Arrow ideas: <───  ◄── ◂─── ◀────●
+);
+
+# The inverse of decompose
+my %composed = map { $decomposed{$_} => $_ } keys %decomposed;
+$composed{"║   "} = "║";
+$composed{" ║  "} = "║";
+$composed{"  ═ "} = "═";
+$composed{"   ═"} = "═";
+
+# Add the rounded corners and dashed/dotted after the composed ones (hash flip)
+# have been calculated
+$decomposed{"╭"} = " ╷╶ ";
+$decomposed{"╮"} = " ╷ ╴";
+$decomposed{"╰"} = "╵ ╶ ";
+$decomposed{"╯"} = "╵  ╴";
+
+$decomposed{"┄"} = $decomposed{"┈"} = $decomposed{"╌"} = "  ╶╴";
+$decomposed{"┅"} = $decomposed{"┉"} = $decomposed{"╍"} = "  ╺╸";
+$decomposed{"┆"} = $decomposed{"┊"} = $decomposed{"╎"} = "╵╷  ";
+$decomposed{"┇"} = $decomposed{"┋"} = $decomposed{"╏"} = "╹╻  ";
+
+# Conversion to rounded corners and dashed/dotted is done afterwards
+my %rounded = ("┌" => "╭", "┐" => "╮", "└" => "╰", "┘" => "╯");
+my %dotted  = ("│" => "┊", "─" => "┈", "┃" => "┋", "━" => "┉");
+my %dashed  = ("│" => "┆", "─" => "┄", "┃" => "┇", "━" => "┅");
+my %bashed  = ("│" => "╎", "─" => "╌", "┃" => "╏", "━" => "╍");
+
+# Combines decomposed box-drawing characters
+# For each position, take from the first string unless it's a space.
+# "a  d", "ab y" => "ab d"
+sub combine_decomposed {
+    my ($as, $bs) = (@_);
+    my (@a) = split //, $as;
+    my (@b) = split //, $bs;
+    my $c = "";
+    for (my $i = 0; $i < 4; $i++) {
+        $c .= $a[$i] eq " " ? $b[$i] : $a[$i];
+    }
+    return $c;
+}
+
+sub replace_decomposed_with_stroke {
+    my ($composed, $stroke) = (@_);
+    my (@as) = split //, $composed;
+    my (@bs) = split //, $strokes{$stroke};
+    my $res = "";
+    for (my $i = 0; $i < 4; $i++) {
+        #$as[$i] = $bs[$i] if $as[$i] eq " ";
+        $res .= $as[$i] ne " " ? $bs[$i] : $as[$i];
+    }
+    return $res;
+}
+
+# Decompose a "═" character into its four directions, using its
+# neighbours to guess if it's "  ═ ", "   ═" or "  ══".
+sub decompose_double_horizontal_at_yx {
+    my ($y, $x) = (@_);
+    my $left_decomp  = $decomposed{get_char_at_yx($y, $x - 1)};
+    my $right_decomp = $decomposed{get_char_at_yx($y, $x + 1)};
+    my $has_conn_left  = defined $left_decomp  && $left_decomp  =~ /^..═.$/;
+    my $has_conn_right = defined $right_decomp && $right_decomp =~ /^...═$/;
+    return "   ═" if $has_conn_left && !$has_conn_right;
+    return "  ═ " if !$has_conn_left && $has_conn_right;
+    return "  ══";
+}
+
+# Decompose a "║" character into its four directions, using its
+# neighbours to guess if it's "║   ", " ║  " or "║║  ".
+sub decompose_double_vertical_at_yx {
+    my ($y, $x) = (@_);
+    my $above_decomp  = $decomposed{get_char_at_yx($y - 1, $x)};
+    my $below_decomp = $decomposed{get_char_at_yx($y + 1, $x)};
+    my $has_conn_above = defined $above_decomp && $above_decomp =~ /^.║..$/;
+    my $has_conn_below = defined $below_decomp && $below_decomp =~ /^║...$/;
+    return "║   " if $has_conn_above && !$has_conn_below;
+    return " ║  " if !$has_conn_above && $has_conn_below;
+    return "║║  ";
+}
+
+# Draws a box-drawing character at a given coordinate, combining it with the
+# character already drawn at that coordinate. $c is a character given as single
+# stroke with square corners, which is converted to the stroke given by $stroke
+# before combining it with the character already present at the coordinare.
+sub draw_at_yx {
+    my ($c, $y, $x, $stroke) = (@_);
+
+    my $is_rounded = $stroke =~ /rounded/;
+    my $is_dotted = $stroke =~ /dotted/;
+    my $is_dashed = $stroke =~ /dashed/;
+    my $is_bashed = $stroke =~ /bashed/;
+
+    # strip modifiers, e.g. "single-dashed-rounded" => "single"
+    ($stroke) = split '-', $stroke;
+
+    my $old = get_char_at_yx($y, $x);
+    die unless $stroke;
+
+    # Decompose old character, e.g. "┐" into " ╷ ╴"
+    # Workaround for missing half-versions of "║" and "═"
+    my $old_decomposed =
+        $old eq "═" ? decompose_double_horizontal_at_yx($y, $x) :
+        $old eq "║" ? decompose_double_vertical_at_yx($y, $x) :
+        $decomposed{$old};
+
+    # Decompose $c, e.g. "│" into "╵╷  " ($c is always single stroke)
+    my $c_decomposed = $decomposed{$c};
+
+    # Convert to desired stroke, e.g. "╵╷  " into "╹╻  "
+    #$stroke = "single" unless $stroke;
+    if ($stroke ne "single") {
+        $c_decomposed = replace_decomposed_with_stroke($c_decomposed, $stroke);
+    }
+    my $new;
+    if ($old_decomposed) {
+        # Combine $old_decomposed and $c_decomposed
+        # e.g. " ╷ ╴" and "╹╻  " into "╹╻ ╴"
+        my $new_decomposed = combine_decomposed($c_decomposed, $old_decomposed);
+        $new = $composed{$new_decomposed};
+        unless ($new) {
+            # Still not possible. Replace old strokes with current stroke.
+            $old_decomposed = replace_decomposed_with_stroke($old_decomposed,
+                                                             $stroke);
+            $new_decomposed = combine_decomposed($c_decomposed, $old_decomposed);
+            $new = $composed{$new_decomposed};
+        }
+        unless ($new) {
+            # Still not possible. Just overwrite.
+            $new = $c;
+        }
+    } elsif ($stroke eq "single") {
+        # Optimization; not really necessary case
+        $new = $c;
+    } else {
+        # There was no old character. Just compose $c_decomposed.
+        $new = $composed{$c_decomposed};
+    }
+    # Replace with rounded variants if possible and desired
+    if ($is_rounded && exists $rounded{$new}) {
+        $new = $rounded{$new};
+    } elsif ($is_dotted && exists $dotted{$new}) {
+        $new = $dotted{$new};
+    } elsif ($is_dashed && exists $dashed{$new}) {
+        $new = $dashed{$new};
+    } elsif ($is_bashed && exists $bashed{$new}) {
+        $new = $bashed{$new};
+    }
+    set_str_at_yx($new, $y, $x) unless $old eq $new;
+}
+
+# Draws borders around (inside) selection and deselects
+sub draw_borders_at_selection {
+    draw_borders($y1, $x1, $y2, $x2, @_);
+}
+
+sub draw_selected_stroke_at {
+    my ($y1, $x1, $y2, $x2) = (@_);
+    ($y1, $x1, $y2, $x2) = normalize_area($y1, $x1, $y2, $x2);
+    my $stroke = $$stroke_buttons[$selected_stroke][3];
+    draw_borders($y1, $x1, $y2, $x2, $stroke);
+}
+
+sub draw_borders {
+    my ($y1, $x1, $y2, $x2, $stroke) = (@_);
+
+    #       0  1  2  3  4  5  6  7  8  9  A  B  C  D  E  F
+    #U+250x ─  ━  │  ┃  ┄  ┅  ┆  ┇  ┈  ┉  ┊  ┋  ┌  ┍  ┎  ┏
+    #U+251x ┐  ┑  ┒  ┓  └  ┕  ┖  ┗  ┘  ┙  ┚  ┛  ├  ┝  ┞  ┟
+    #U+252x ┠  ┡  ┢  ┣  ┤  ┥  ┦  ┧  ┨  ┩  ┪  ┫  ┬  ┭  ┮  ┯
+    #U+253x ┰  ┱  ┲  ┳  ┴  ┵  ┶  ┷  ┸  ┹  ┺  ┻  ┼  ┽  ┾  ┿
+    #U+254x ╀  ╁  ╂  ╃  ╄  ╅  ╆  ╇  ╈  ╉  ╊  ╋  ╌  ╍  ╎  ╏
+    #U+255x ═  ║  ╒  ╓  ╔  ╕  ╖  ╗  ╘  ╙  ╚  ╛  ╜  ╝  ╞  ╟
+    #U+256x ╠  ╡  ╢  ╣  ╤  ╥  ╦  ╧  ╨  ╩  ╪  ╫  ╬  ╭  ╮  ╯
+    #U+257x ╰  ╱  ╲  ╳  ╴  ╵  ╶  ╷  ╸  ╹  ╺  ╻  ╼  ╽  ╾  ╿     
+
+    if ($y1 < $y2 && $x1 < $x2) {
+        # rectangle
+        draw_at_yx("┌", $y1, $x1, $stroke);
+        for (my $x = $x1 + 1; $x < $x2; $x++) {
+            draw_at_yx("─", $y1, $x, $stroke);
+        }
+        draw_at_yx("┐", $y1, $x2, $stroke);
+        for (my $r = $y1 + 1; $r < $y2; $r++) {
+            draw_at_yx("│", $r, $x1, $stroke);
+            draw_at_yx("│", $r, $x2, $stroke);
+        }
+        draw_at_yx("└", $y2, $x1, $stroke);
+        for (my $x = $x1 + 1; $x < $x2; $x++) {
+            draw_at_yx("─", $y2, $x, $stroke);
+        }
+        draw_at_yx("┘", $y2, $x2, $stroke);
+    } elsif ($y1 == $y2 && $x1 < $x2) {
+        # horizontal line
+        draw_at_yx("╶", $y1, $x1, $stroke);
+        for (my $x = $x1 + 1; $x < $x2; $x++) {
+            draw_at_yx("─", $y1, $x, $stroke);
+        }
+        draw_at_yx("╴", $y1, $x2, $stroke);
+    } elsif ($y1 < $y2 && $x1 == $x2) {
+        # vertical line
+        draw_at_yx("╷", $y1, $x1, $stroke);
+        for (my $r = $y1 + 1; $r < $y2; $r++) {
+            draw_at_yx("│", $r, $x1, $stroke);
+        }
+        draw_at_yx("╵", $y2, $x1, $stroke);
+    }
+    deselect();
+}
+
+sub min {
+    my ($a, $b) = (@_);
+    return $a <= $b ? $a : $b;
+}
+
+## Draws a big X over the selected area using diagonal box drawing characters.
+## Input "X", "/" or "\" to draw one or both diagonals
+sub draw_diagonal {
+    return unless $y1 <= $y2 && $x1 <= $x2;
+
+    my ($mode) = (@_);
+
+    # Make square
+    my $delta_y = $y2 - $y1;
+    my $delta_x = $x2 - $x1;
+    my ($y_start, $y_end, $x_start, $x_end) = ($y1, $y2, $x1, $x2);
+    if ($delta_y < $delta_x) {
+        # Too wide. Crop the left and right sides.
+        $x_start = $x1 + int(($delta_x - $delta_y) / 2);
+        $x_end = $x_start + $delta_y;
+    } elsif ($delta_y > $delta_x) {
+        # Too high. Crop top and bottom.
+        $y_start = $y1 + int(($delta_y - $delta_x) / 2);
+        $y_end = $y_start + $delta_x;
+    }
+    for (my $r = $y_start; $r <= $y_end; $r++) {
+        my $left = $x_start + ($r - $y_start);
+        my $right = $x_end - ($r - $y_start);
+        if ($left == $right) {
+            set_str_at_yx("╳", $r, $left) if $mode eq "X";
+            set_str_at_yx("╲", $r, $left) if $mode eq "\\";
+            set_str_at_yx("╱", $r, $left) if $mode eq "/";
+        } else {
+            set_str_at_yx("╲", $r, $left) if $mode eq "X" || $mode eq "\\";
+            set_str_at_yx("╱", $r, $right) if $mode eq "X" || $mode eq "/";;
+        }
+    }
+}
+
+sub message {
+    ($message) = (@_);
+    debug($message . "\n");
+}
+
+#                          ▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒
+#                          ▒░░░░░░░░░░░░░░░░░░░░▒
+#                          ▒░░  ██  ██  ██  ██░░▒
+#                          ▒░░██  ██  ██  ██  ░░▒
+#                          ▒░░  ██  ██  ██  ██░░▒
+#                          ▒░░██  ██  ██  ██  ░░▒
+#                          ▒░░  ██  ██  ██  ██░░▒
+#                          ▒░░██  ██  ██  ██  ░░▒
+#                          ▒░░  ██  ██  ██  ██░░▒
+#                          ▒░░██  ██  ██  ██  ░░▒
+#                          ▒░░░░░░░░░░░░░░░░░░░░▒
+#                          ▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒
+
+sub handle_stoke_selector_input {
+    ($_) = (@_);
+    if (/^(?:\t|\r| |\e\e)$/) {
+        # Selector off
+        $selector = undef;
+        print "\e[?25h"; # show the cursor
+    } elsif (/^\e\[(1;(\d)|)([A-D])$/) {
+        if ($3 eq "C") {
+            $selected_stroke++
+                if $selected_stroke < @$stroke_buttons - 1;
+        } elsif ($3 eq "D") {
+            $selected_stroke-- if $selected_stroke > 0;
+        }
+    }
+}
+
+# input when no stroke selector is open
+sub handle_input {
+    ($_) = (@_);
+    my $sel_on = 0;
+    my $pen = 0;
+    my $old_x = $x;
+    my $old_y = $y;
+    my $move = undef; # ABCD directions (up, down, right, left)
+    if (/^\e\[(1;(\d)|)([A-D])$/) {
+        # Arrow key
+        if (!$1) {
+            # No modifier, just move cursor
+        } elsif ($2 == 2) {
+            # Shift: Start selection unless already started
+            if (!defined $selx) {
+                $sely = $y; $selx = $x;
+            }
+            $sel_on = 1;
+        } elsif ($2 == 5) {
+            # Ctrl: Pen using selected stroke
+            $pen = 1;
+        } else {
+            debug("Arrow key with modifier $2\n")
+        }
+        $move = $3;
+    } elsif ($_ eq "\e[3~") {
+        # delete
+        fill_selection(" ");
+    } elsif ($_ eq "\e\e") {
+        deselect();
+    } elsif ($_ eq "x") {
+        draw_diagonal("X");
+    } elsif ($_ eq "/") {
+        draw_diagonal("/");
+    } elsif ($_ eq "\\") {
+        draw_diagonal("\\");
+    } elsif ($_ eq "-") {
+        draw_borders_at_selection("single");
+    } elsif ($_ eq "o") {
+        draw_borders_at_selection("single-rounded");
+    } elsif ($_ eq "b") {
+        draw_borders_at_selection("bold");
+    } elsif ($_ eq "=") {
+        draw_borders_at_selection("double");
+    } elsif ($_ eq "4") {
+        fill_selection("█");
+    } elsif ($_ eq '3') {
+        fill_selection("▓");
+    } elsif ($_ eq "2") {
+        fill_selection("▒");
+    } elsif ($_ eq "1") {
+        fill_selection("░");
+    } elsif ($_ eq "0") {
+        fill_selection(" ");
+    } elsif ($_ eq "e") {
+        # Emoji test. These should be full-width, but some aren't.
+        # set_char("\x{1F600}"); # :D full-width
+        set_char("\x{263a}"); # :-) half-width
+    } elsif ($_ eq "\0") {
+        # Ctrl+Space = start sticky selection
+        $sticky_selection = 1;
+        $selx = $x;
+        $sely = $y;
+        update_selection;
+    } elsif ($_ eq " ") {
+        # Space = select/deselect
+        if ($y2 > $y1 || $x2 > $x1) {
+            my $stroke = $$stroke_buttons[$selected_stroke][3];
+            draw_borders_at_selection($stroke);
+            deselect();
+        } elsif ($sticky_selection) {
+            deselect();
+        } else {
+            # Start sticky select
+            $sticky_selection = 1;
+            $selx = $x;
+            $sely = $y;
+            update_selection;
+        }
+    } elsif ($_ eq "\t") {
+        # toggle stroke selector
+        # (private use CSI)
+        # CSI ? 25 h    DECTCEM Shows the cursor, from the VT320.
+        # CSI ? 25 l    DECTCEM Hides the cursor.
+        $selector = 'stroke';
+        print "\e[?25l";
+    } elsif ($_ eq "q") {
+        debug("q=quit\n");
+    } elsif (/^\e/) {
+        s/\e/\\e/g;
+        debug("Unhandled escape sequence: $_\n");
+    } elsif (/^[\x00-\x1f]$/) {
+        my $ord = ord($_);
+        debug(sprintf("Unhandled control character: ^%s (0x%x)\n",
+              chr($ord + 64), $ord));
+    } else {
+        debug(sprintf("Unhandled character: %s (0x%x)\n", $_, ord($_)));
+    }
+
+    # Move cursor
+    if (defined $move) {
+        if ($move eq "A") {
+            $y-- if $y > 1;
+        } elsif ($move eq "B") {
+            $y++ if $y < $lines - 1;
+        } elsif ($move eq "C") {
+            $x++ if $x < $cols;
+        } elsif ($move eq "D") {
+            $x-- if $x > 1;
+        }
+        unless ($sel_on || $sticky_selection) {
+            #$selx = $sely = undef; # no selection
+            $selx = $x; $sely = $y; # 1x1 selection
+        }
+        if ($pen) {
+            # draw from $old_y, $old_x to current
+            draw_selected_stroke_at($old_y, $old_x, $y, $x);
+        }
+        update_selection();
+    }
+}
+
+# Fetch the rest of an escape sequence starting with the Control Sequence
+# Introducer. "\e[" has already been received.
+sub handle_csi {
+    my $param = "";
+    my $intermediate = "";
+    my $c;
+    $c = getc();
+    while ($c ge "0" && $c le "?") {
+        # "parameter bytes" in the range 0x30–0x3F (ASCII 0–9:;<=>?)
+        $param .= $c;
+        $c = getc();
+    }
+    while ($c ge " " && $c le "/") {
+        # "intermediate bytes" in the range 0x20–0x2F (ASCII space and !"#$%&'()*+,-./)
+        $intermediate .= $c;
+        $c = getc();
+    }
+    # a single "final byte" in the range 0x40–0x7E (ASCII @A–Z[\]^_`a–z{|}~)
+    $c ge "@" && $c le "~" or die "Invalid escape sequence";
+    return "\e[$param$intermediate$c";
+}
+
+# Handle escape sequences, i.e. sequences starting with \e
+sub handle_esc {
+    my $c = getc();
+    if ($c eq "[") {
+        return handle_csi();
+    } elsif ($c eq "O") {
+        # \eOP \eOQ \eOR \eOS = F1 F2 F3 F4
+        my $F = getc();
+        return $F unless $F =~ /^[PQRS]$/;
+        return "\e$c$F";
+    } else {
+        return "\e$c";
+    }
+}
+
+# A wrapper for getc(), fetching a whole escape sequence or UTF-8 byte
+# sequence, depending on the first byte fetched.
+sub get_input_sequence {
+    my $c = getc();
+    if ($c eq "\e") {
+        return handle_esc();
+    } else {
+        return $c;
+    }
+}
+
+system "stty raw -echo";
+message("Press q to quit");
+# get tty size
+winch();
+# center cursor
+$x1 = $x2 = $x = int($cols / 2);
+$y1 = $y2 = $y = int($lines / 2);
+while(1) {
+    render();
+    my $c = get_input_sequence();
+    if (!defined($selector)) {
+        handle_input($c);
+    } elsif ($selector eq 'stroke') {
+        handle_stoke_selector_input($c);
+    }
+    last if $c eq "q";
+}
+system "stty sane";
+print "\n";
+#for my $str (@$rows) {
+#    if (defined $str) {
+#        print "$str\n";
+#    } else {
+#        print "\n";
+#    }
+#}
