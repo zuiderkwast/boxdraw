@@ -31,7 +31,8 @@ my $message = "h = help, q = quit"; # message to display in status bar
 my $rows = [];            # text lines without \n
 my $debug = 0;            # toggled by -d or --debug
 my $filename;             #
-my $selector = undef;     # Visible 'stroke' or 'character' selector
+my $selector = undef;     # Visible 'stroke' (or e.g. 'character') selector
+my $mode = undef;         # Input mode: undef or 'text'
 my $help = 0;             # Help pane toggled with 'h'
 #open my $tty, "<+", "/dev/tty";
 
@@ -59,47 +60,52 @@ sub winch {
     $stty =~ /rows (\d+); columns (\d+)/ or die "Can't get terminal size";
     $cols = int $2;
     $lines = int $1;
-    #message($lines . "x" . $cols);
+    #message("Window size: ${cols}x${lines}");
     render();
 }
 use sigtrap 'handler', \&winch, 'WINCH';
 
 sub abort {
-    system "stty sane";
     die "aborted";
 }
 use sigtrap 'handler', \&abort, 'normal-signals';
+
+END {
+    system "stty sane";
+    print "\e[?25h"; # show the cursor
+    print "\n";
+};
 
 # --- rendering ---
 
 my $selected_stroke = 0;
 my $stroke_buttons = [
     ['┌─┐',
-     '└─┘', '-', 'single'],
+     '└─┘', 'single'],
     ['╭─╮',
-     '╰─╯', 'o', 'single-rounded'],
+     '╰─╯', 'single-rounded'],
     ['┏━┓',
-     '┗━┛', 'b', 'bold'],
+     '┗━┛', 'bold'],
     ['╔═╗',
-     '╚═╝', '=', 'double'],
+     '╚═╝', 'double'],
     ['┌╌┐',
-     '└╌┘', '', 'single-bashed'],
+     '└╌┘', 'single-bashed'],
     ['╭╌╮',
-     '╰╌╯', '', 'single-bashed-rounded'],
+     '╰╌╯', 'single-bashed-rounded'],
     ['┏╍┓',
-     '┗╍┛', '', 'bold-bashed'],
+     '┗╍┛', 'bold-bashed'],
     ['┌┄┐',
-     '└┄┘', '', 'single-dashed'],
+     '└┄┘', 'single-dashed'],
     ['╭┄╮',
-     '╰┄╯', '', 'single-dashed-rounded'],
+     '╰┄╯', 'single-dashed-rounded'],
     ['┏┅┓',
-     '┗┅┛', '', 'bold-dashed'],
+     '┗┅┛', 'bold-dashed'],
     ['┌┈┐',
-     '└┈┘', '', 'single-dotted'],
+     '└┈┘', 'single-dotted'],
     ['╭┈╮',
-     '╰┈╯', '', 'single-dotted-rounded'],
+     '╰┈╯', 'single-dotted-rounded'],
     ['┏┉┓',
-     '┗┉┛', '', 'bold-dotted'],
+     '┗┉┛', 'bold-dotted'],
 ];
 
 sub render_stroke_selector {
@@ -124,11 +130,62 @@ sub render_stroke_selector {
     print "\e[m"; # reset/normal
 }
 
-sub render {
-    # clear screen
-    print "\ec";
+sub render_status_bar () {
+    my $left_msg = " $message";
+    my $stroke_ind = $$stroke_buttons[$selected_stroke][0];
+    my @right_msgs = ();
+    if ($x2 != $x1 || $y2 != $y1) {
+        push @right_msgs, ($x2 - $x1 + 1) . "x" . ($y2 - $y1 + 1);
+    }
+    push @right_msgs, sprintf("%2s,%-2s", $y, $x);
+    push @right_msgs, $stroke_ind;
+    my $right_msg = join(' ', @right_msgs) . ' ';
+    my $left_length = $cols - length($right_msg);
+    my $padded_msg = length($left_msg) > $left_length ?
+                         substr($left_msg, 0, $left_length) :
+                         sprintf("%-*s", $left_length, $left_msg);
+    $padded_msg .= $right_msg;
 
-    # contents
+    my $message_y = $lines;
+    printf "\e[$message_y;1H\e[42m$padded_msg\e[49m";
+}
+
+sub render_popup($$) {
+    my ($text, $color_esc_seq) = @_;
+    my @l = $text =~ /\S.+\S/gm;
+    my $off_x = int(($cols - length($l[0])) / 2) + 1;
+    my $off_y = int(($lines - @l) / 2) + 1;
+    print $color_esc_seq if $color_esc_seq;
+    foreach (@l) {
+        print "\e[$off_y;${off_x}H$_";
+        $off_y++;
+    }
+    print "\e[m" if $color_esc_seq;  # reset color
+    print "\e[?25l";                 # hide cursor
+}
+
+sub render_help() {
+    #my @l = <<'End_Lines' =~ m/(\S.*\S)/g;
+    render_popup(
+     '╭───────────────────────────────────────────╮
+      │ Help                                      │
+      ┝━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━┥
+      │ h               Help                      │
+      │ q               Quit                      │
+      │ Arrows          Navigate                  │
+      │ Ctrl + Arrows   Draw                      │
+      │ Shift + Arrows  Select area               │
+      │ TAB             Select stroke             │
+      │ SPACE           Draw borders in selection │
+      │ -, =, b, o      Shorthand for borders of  │
+      │                 some strokes              │
+      │ x, /, \         Draw diagonals in         │
+      │                 selection                 │
+      │                                           │
+      ╰───────────────────────────────────────────╯', "\e[45m");
+}
+
+sub render_content() {
     my $last_content_line = defined($selector) ? $lines - 4 : $lines - 1;
 
     for (my $r = 1; $r <= $last_content_line; $r ++) {
@@ -148,16 +205,18 @@ sub render {
             print "\e[$r;1H$str";
         }
     }
+}
 
-    # Status bar
-    my $message_y = $lines;
-    if ($message ne "") {
-        my $stroke_ind = $$stroke_buttons[$selected_stroke][0];
-        my $padded_message = sprintf("%-*s", $cols, " $stroke_ind $message");
-        printf "\e[$message_y;1H\e[42m$padded_message\e[49m";
-    }
+sub render {
+    # clear screen
+    print "\ec";
 
-    if (!defined $selector) {
+    render_content();
+    render_status_bar();
+
+    if ($help) {
+        render_help();
+    } elsif (!defined $selector) {
         # Set cursor position
         print "\e[$y;${x}H";
     } elsif ($selector eq 'stroke') {
@@ -358,7 +417,9 @@ my %decomposed = (
     "╿" => "╹╷  ",
     # dotted/dashed: ┄ ┅ ┆ ┇ ┈ ┉ ┊ ┋ ╌ ╍ ╎ ╏
     # Diagonal: ╱ ╲ ╳
-    # Arrow ideas: <───  ◄── ◂─── ◀────●
+    #                  Λ (lambda), Ʌ (turned V)
+    # Arrow ideas: <───┼─>  ◄── ◂─── ◀────●
+    #                  V
 );
 
 # The inverse of decompose
@@ -516,7 +577,7 @@ sub draw_borders_at_selection {
 sub draw_selected_stroke_at {
     my ($y1, $x1, $y2, $x2) = (@_);
     ($y1, $x1, $y2, $x2) = normalize_area($y1, $x1, $y2, $x2);
-    my $stroke = $$stroke_buttons[$selected_stroke][3];
+    my $stroke = $$stroke_buttons[$selected_stroke][2];
     draw_borders($y1, $x1, $y2, $x2, $stroke);
 }
 
@@ -607,7 +668,7 @@ sub draw_diagonal {
 }
 
 sub message {
-    ($message) = (@_);
+    $message = shift;
     debug($message . "\n");
 }
 
@@ -640,14 +701,15 @@ sub handle_stoke_selector_input {
     }
 }
 
-# input when no stroke selector is open
-sub handle_input {
-    ($_) = (@_);
+# input in drawing mode when no stroke selector is open
+sub handle_input($) {
+    $_ = shift;
     my $sel_on = 0;
     my $pen = 0;
     my $old_x = $x;
     my $old_y = $y;
     my $move = undef; # ABCD directions (up, down, right, left)
+    message("");
     if (/^\e\[(1;(\d)|)([A-D])$/) {
         # Arrow key
         if (!$1) {
@@ -707,7 +769,7 @@ sub handle_input {
     } elsif ($_ eq " ") {
         # Space = select/deselect
         if ($y2 > $y1 || $x2 > $x1) {
-            my $stroke = $$stroke_buttons[$selected_stroke][3];
+            my $stroke = $$stroke_buttons[$selected_stroke][2];
             draw_borders_at_selection($stroke);
             deselect();
         } elsif ($sticky_selection) {
@@ -725,9 +787,14 @@ sub handle_input {
         # CSI ? 25 h    DECTCEM Shows the cursor, from the VT320.
         # CSI ? 25 l    DECTCEM Hides the cursor.
         $selector = 'stroke';
-        print "\e[?25l";
+        print "\e[?25l"; # hide cursor
     } elsif ($_ eq "q") {
         debug("q=quit\n");
+    } elsif ($_ eq "h") {
+        debug("h=help\n");
+        message("Press h again to close the help box");
+        print "\e[?25l"; # hide cursor
+        $help = 1;
     } elsif (/^\e/) {
         s/\e/\\e/g;
         debug("Unhandled escape sequence: $_\n");
@@ -811,7 +878,6 @@ sub get_input_sequence {
 }
 
 system "stty raw -echo";
-message("Press q to quit");
 # get tty size
 winch();
 # center cursor
@@ -820,15 +886,20 @@ $y1 = $y2 = $y = int($lines / 2);
 while(1) {
     render();
     my $c = get_input_sequence();
-    if (!defined($selector)) {
+    if ($help) {
+        # handle input when help box is open
+        if ($c =~ /^(?:h|q|\r|\e\e)$/) {
+            $help = 0;
+            print "\e[?25h"; # show cursor
+            message("");
+        }
+    } elsif (!defined($selector)) {
         handle_input($c);
+        last if $c eq "q";
     } elsif ($selector eq 'stroke') {
         handle_stoke_selector_input($c);
     }
-    last if $c eq "q";
 }
-system "stty sane";
-print "\n";
 #for my $str (@$rows) {
 #    if (defined $str) {
 #        print "$str\n";
