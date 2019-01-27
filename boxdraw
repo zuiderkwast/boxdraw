@@ -23,7 +23,7 @@ use 5.18.0;
 use open qw(:std :utf8);
 
 my ($cols, $lines);       # size of terminal
-my ($x, $y) = (1, 1);     # cursor coordinates
+my ($x, $y) = (1, 1);     # cursor coordinates, 1-based
 my ($selx, $sely);        # selection starting point or (under, undef)
 my ($y1, $x1, $y2, $x2) = (1,1,1,1);  # selection rectangle
 my $sticky_selection = 0; # when on, arrow keys extend selection
@@ -32,7 +32,7 @@ my $rows = [];            # text lines without \n
 my $debug = 0;            # toggled by -d or --debug
 my $filename;             #
 my $selector = undef;     # Visible 'stroke' (or e.g. 'character') selector
-my $mode = undef;         # Input mode: undef or 'text'
+my $mode = undef;         # undef or 'text', 'move', etc. (not implemented)
 my $help = 0;             # Help pane toggled with 'h'
 #open my $tty, "<+", "/dev/tty";
 
@@ -55,20 +55,23 @@ sub debug {
     print STDERR @_ if $debug;
 }
 
-sub winch {
+sub update_window_size() {
     my $stty = `stty -F/dev/tty -a`;
     $stty =~ /rows (\d+); columns (\d+)/ or die "Can't get terminal size";
     $cols = int $2;
     $lines = int $1;
-    #message("Window size: ${cols}x${lines}");
+}
+
+sub winch() {
+    update_window_size();
+    message("Window size: ${cols}x${lines}");
+    $x = $cols if $x > $cols;
+    $y = $lines - 1 if $y > $lines -1 ;
     render();
 }
 use sigtrap 'handler', \&winch, 'WINCH';
-
-sub abort {
-    die "aborted";
-}
-use sigtrap 'handler', \&abort, 'normal-signals';
+use sigtrap qw(die normal-signals);
+use sigtrap qw(stack-trace error-signals);
 
 END {
     system "stty sane";
@@ -190,8 +193,9 @@ sub render_content() {
 
     for (my $r = 1; $r <= $last_content_line; $r ++) {
         my $str = defined $$rows[$r - 1] ? $$rows[$r - 1] : "";
-        if ($r >= $y1 && $r <= $y2) {
+        if ($r >= $y1 && $r <= $y2 && ($x1 != $x2 || $y1 != $y2)) {
             # Highlight selection (rectangle) with background color
+            # except if the selection is 1x1.
             # Pad $str with spaces so that it covers the selection
             if (length($str) < $x2) {
                 $str .= " " x ($x2 - length($str));
@@ -207,7 +211,7 @@ sub render_content() {
     }
 }
 
-sub render {
+sub render() {
     # clear screen
     print "\ec";
 
@@ -222,6 +226,7 @@ sub render {
     } elsif ($selector eq 'stroke') {
         render_stroke_selector();
     }
+    flush STDOUT;
 }
 
 # --- content manipulation ---
@@ -866,10 +871,10 @@ sub handle_esc {
     }
 }
 
-# A wrapper for getc(), fetching a whole escape sequence or UTF-8 byte
-# sequence, depending on the first byte fetched.
-sub get_input_sequence {
+# A wrapper for getc(), fetching a character or a complete escape sequence
+sub get_input_sequence() {
     my $c = getc();
+    die "getc(): $!" unless defined $c;
     if ($c eq "\e") {
         return handle_esc();
     } else {
@@ -878,8 +883,7 @@ sub get_input_sequence {
 }
 
 system "stty raw -echo";
-# get tty size
-winch();
+update_window_size();
 # center cursor
 $x1 = $x2 = $x = int($cols / 2);
 $y1 = $y2 = $y = int($lines / 2);
