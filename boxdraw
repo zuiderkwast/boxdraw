@@ -32,8 +32,7 @@ my $rows = [];            # text lines without \n
 my $debug = 0;            # toggled by -d or --debug
 my $filename;             #
 my $selector = undef;     # Visible 'stroke' (or e.g. 'character') selector
-my $mode = undef;         # undef or 'text', 'move', etc. (not implemented)
-my $help = 0;             # Help pane toggled with 'h'
+my $mode = 'draw';        # 'draw', 'move', 'help'
 #open my $tty, "<+", "/dev/tty";
 
 # TODO: Read from /dev/tty instead of STDIN.
@@ -189,8 +188,11 @@ sub render_help() {
 }
 
 sub render_content() {
-    my $last_content_line = defined($selector) ? $lines - 4 : $lines - 1;
 
+    my $sel_color = $mode eq 'move' ? "\e[45m"  # purple?
+                                    : "\e[43m"; # yellow
+
+    my $last_content_line = defined($selector) ? $lines - 4 : $lines - 1;
     for (my $r = 1; $r <= $last_content_line; $r ++) {
         my $str = defined $$rows[$r - 1] ? $$rows[$r - 1] : "";
         if ($r >= $y1 && $r <= $y2 && ($x1 != $x2 || $y1 != $y2)) {
@@ -201,8 +203,8 @@ sub render_content() {
                 $str .= " " x ($x2 - length($str));
             }
             print "\e[$r;1H",
-                  substr($str, 0, $x1 - 1), "\e[43m",             # yellow
-                  substr($str, $x1 - 1, $x2 - $x1 + 1), "\e[49m", # default
+                  substr($str, 0, $x1 - 1), $sel_color,           # highlight
+                  substr($str, $x1 - 1, $x2 - $x1 + 1), "\e[49m", # normal
                   substr($str, $x2);
         } elsif ($str ne "") {
             # No selection. Just print the line.
@@ -218,7 +220,7 @@ sub render() {
     render_content();
     render_status_bar();
 
-    if ($help) {
+    if ($mode eq "help") {
         render_help();
     } elsif (!defined $selector) {
         # Set cursor position
@@ -231,15 +233,25 @@ sub render() {
 
 # --- content manipulation ---
 
-sub get_char_at_yx {
-    my ($y, $x) = (@_);
+sub get_substr_at_yx($$$) {
+    my ($y, $x, $length) = (@_);
     $x--; $y--; # switch to 0-based index
-    return defined $$rows[$y] && length($$rows[$y]) > $x
-           ? substr($$rows[$y], $x, 1)
-           : " ";
+    if (defined $$rows[$y] && length($$rows[$y]) > $x) {
+        my $str = substr($$rows[$y], $x, $length);
+        # pad with spaces
+        $str = sprintf("%-*s", $length, $str) if length($str) < $length;
+        return $str;
+    } else {
+        return " " x $length;
+    }
 }
 
-sub set_str_at_yx {
+sub get_char_at_yx($$) {
+    my ($y, $x) = (@_);
+    return get_substr_at_yx($y, $x, 1);
+}
+
+sub set_substr_at_yx($$$) {
     # This function doesn't create trailing whitespace
     my ($s, $y, $x) = (@_);
     $x--; $y--; # switch to 0-based index
@@ -252,28 +264,33 @@ sub set_str_at_yx {
         return if $s eq " ";
         my $pad = " " x ($x - $len);
         $$rows[$y] .= $pad . $s;
+    #} elsif ($s =~ / $/ && $x + length($s) >= $len) {
     } elsif ($s eq " " && $x + 1 == $len) {
-        # Overwrite the last character with space: Remove it and trim.
+        # Optimized case: Overwriting the last character with space
+        # Remove it and trim.
         $$rows[$y] =~ s/ *.$//;
     } else {
         # Replace substr
         substr($$rows[$y], $x, length($s), $s);
+        # Trim railing spaces (only needed if $s ends with a space)
+        $$rows[$y] =~ s/ *$//;
     }
 }
 sub set_char {
     my ($s) = (@_);
-    set_str_at_yx($s, $y, $x);
+    set_substr_at_yx($s, $y, $x);
 }
 
 sub fill_selection {
     my ($s) = (@_);
     my $repeated_s = $s x (($x2 - $x1 + 1) / length($s));
     for (my $r = $y1; $r <= $y2; $r++) {
-        set_str_at_yx($repeated_s, $r, $x1);
+        set_substr_at_yx($repeated_s, $r, $x1);
     }
     deselect();
 }
 
+# Order the coordinates of a rectangle as
 # y1, x1, y2, x2 => (min y, min x, max y, max x)
 sub normalize_area {
     my ($y1, $x1, $y2, $x2) = (@_);
@@ -309,6 +326,29 @@ my %strokes = (
     "bold"   => "╹╻╺╸",
     "double" => "║║══", # single direction missing
 );
+
+# manipulation of single-direction components
+# (Used for experimental 'move' mode)
+my %point_down = (
+    "╵" => "╷", "╷" => "╷", "╶" => "╷", "╴" => "╷",
+    "╹" => "╻", "╻" => "╻", "╺" => "╻", "╸" => "╻",
+    "║" => "║", "═" => "║");
+my %point_up = (
+    "╵" => "╵", "╷" => "╵", "╶" => "╵", "╴" => "╵",
+    "╹" => "╹", "╻" => "╹", "╺" => "╹", "╸" => "╹",
+    "║" => "║", "═" => "║");
+my %point_right = (
+    "╵" => "╶", "╷" => "╶", "╶" => "╶", "╴" => "╶",
+    "╹" => "╺", "╻" => "╺", "╺" => "╺", "╸" => "╺",
+    "║" => "═", "═" => "═");
+my %point_left = (
+    "╵" => "╴", "╷" => "╴", "╶" => "╴", "╴" => "╴",
+    "╹" => "╸", "╻" => "╸", "╺" => "╸", "╸" => "╸",
+    "║" => "═", "═" => "═");
+#my %mirrored = (
+#    "╵" => "╷", "╷" => "╵", "╶" => "╴", "╴" => "╶",
+#    "╹" => "╻", "╻" => "╹", "╺" => "╸", "╸" => "╺",
+#    "║" => "║", "═" => "═");
 
 my %decomposed = (
     "─" => "  ╶╴",
@@ -504,6 +544,17 @@ sub decompose_double_vertical_at_yx {
     return "║║  ";
 }
 
+# Returns a string of 4 characters if the character is a box-drawing character;
+# undef otherwise.
+sub get_decomposed_at_yx($$) {
+    my ($y, $x) = (@_);
+    my $old = get_char_at_yx($y, $x);
+    return
+        $old eq "═" ? decompose_double_horizontal_at_yx($y, $x) :
+        $old eq "║" ? decompose_double_vertical_at_yx($y, $x) :
+        $decomposed{$old};
+}
+
 # Draws a box-drawing character at a given coordinate, combining it with the
 # character already drawn at that coordinate. $c is a character given as single
 # stroke with square corners, which is converted to the stroke given by $stroke
@@ -519,15 +570,11 @@ sub draw_at_yx {
     # strip modifiers, e.g. "single-dashed-rounded" => "single"
     ($stroke) = split '-', $stroke;
 
-    my $old = get_char_at_yx($y, $x);
     die unless $stroke;
 
     # Decompose old character, e.g. "┐" into " ╷ ╴"
     # Workaround for missing half-versions of "║" and "═"
-    my $old_decomposed =
-        $old eq "═" ? decompose_double_horizontal_at_yx($y, $x) :
-        $old eq "║" ? decompose_double_vertical_at_yx($y, $x) :
-        $decomposed{$old};
+    my $old_decomposed = get_decomposed_at_yx($y, $x);
 
     # Decompose $c, e.g. "│" into "╵╷  " ($c is always single stroke)
     my $c_decomposed = $decomposed{$c};
@@ -571,7 +618,7 @@ sub draw_at_yx {
     } elsif ($is_bashed && exists $bashed{$new}) {
         $new = $bashed{$new};
     }
-    set_str_at_yx($new, $y, $x) unless $old eq $new;
+    set_substr_at_yx($new, $y, $x); # unless $old eq $new;
 }
 
 # Draws borders around (inside) selection and deselects
@@ -640,10 +687,10 @@ sub min {
 
 ## Draws a big X over the selected area using diagonal box drawing characters.
 ## Input "X", "/" or "\" to draw one or both diagonals
-sub draw_diagonal {
+sub draw_diagonal($) {
     return unless $y1 <= $y2 && $x1 <= $x2;
 
-    my ($mode) = (@_);
+    my $mode = shift;
 
     # Make square
     my $delta_y = $y2 - $y1;
@@ -662,12 +709,12 @@ sub draw_diagonal {
         my $left = $x_start + ($r - $y_start);
         my $right = $x_end - ($r - $y_start);
         if ($left == $right) {
-            set_str_at_yx("╳", $r, $left) if $mode eq "X";
-            set_str_at_yx("╲", $r, $left) if $mode eq "\\";
-            set_str_at_yx("╱", $r, $left) if $mode eq "/";
+            set_substr_at_yx("╳", $r, $left) if $mode eq "X";
+            set_substr_at_yx("╲", $r, $left) if $mode eq "\\";
+            set_substr_at_yx("╱", $r, $left) if $mode eq "/";
         } else {
-            set_str_at_yx("╲", $r, $left) if $mode eq "X" || $mode eq "\\";
-            set_str_at_yx("╱", $r, $right) if $mode eq "X" || $mode eq "/";;
+            set_substr_at_yx("╲", $r, $left) if $mode eq "X" || $mode eq "\\";
+            set_substr_at_yx("╱", $r, $right) if $mode eq "X" || $mode eq "/";;
         }
     }
 }
@@ -690,8 +737,8 @@ sub message {
 #                          ▒░░░░░░░░░░░░░░░░░░░░▒
 #                          ▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒
 
-sub handle_stoke_selector_input {
-    ($_) = (@_);
+sub handle_stoke_selector_input($) {
+    $_ = shift;
     if (/^(?:\t|\r| |\e\e)$/) {
         # Selector off
         $selector = undef;
@@ -703,6 +750,87 @@ sub handle_stoke_selector_input {
         } elsif ($3 eq "D") {
             $selected_stroke-- if $selected_stroke > 0;
         }
+    }
+}
+
+sub move_selection_left() {
+    for (my $r = $y1; $r <= $y2; $r++) {
+        my $str = get_substr_at_yx($r, $x1, $x2 - $x1 + 1);
+        set_substr_at_yx("$str ", $r, $x1 - 1);
+    }
+}
+
+
+# Computes a filler, given four decomposed characters
+# (Used for experimental 'move' mode)
+sub make_filler($$$$) {
+    my ($above, $below, $rightof, $leftof) = (@_);
+    my $down  = $below   && $below   =~ /^(\S)...$/ ? $point_down{$1}  : " ";
+    my $up    = $above   && $above   =~ /^.(\S)..$/ ? $point_up{$1}    : " ";
+    my $left  = $leftof  && $leftof  =~ /^..(\S).$/ ? $point_left{$1} : " ";
+    my $right = $rightof && $rightof =~ /^...(\S)$/ ? $point_right{$1}  : " ";
+    my $decomp = $up.$down.$right.$left;
+    my $c = $composed{$decomp};
+    $c = " " unless defined $c;
+    debug("Make filler: '$decomp' composed to '$c'\n");
+    return $c;
+}
+
+# Experimental 'move' mode. Only <move left> works and is incomplete.
+sub handle_move_input($) {
+    $_ = shift;
+    if (/^(?:\t|\r| |m|q|\e\e)$/) {
+        # Move mode off
+        $mode = 'draw';
+        message("Drawing mode");
+        print "\e[?25h"; # show the cursor
+    } elsif (/^\e\[(?:1;\d)?([A-D])$/) {
+        if ($1 eq "A" && $y1 > 1) {
+            # $move_y--;
+        } elsif ($1 eq "B" && $y2 < $lines - 1) {
+            # $move_y++;
+        } elsif ($1 eq "C" && $x2 < $cols) {
+            # $move_x++;
+        } elsif ($1 eq "D" && $x1 > 1) {
+            # Move selection left
+            # Change the corners
+            my $nw = get_decomposed_at_yx($y1, $x2);
+            if ($nw && $nw =~ /(\S)(.).(.)/) {
+                debug("nw = '$nw';  => '" .
+                      " " . $2 . $point_right{$1} . $3 . "'\n");
+                $nw = " " . $2 . $point_right{$1} . $3;
+            }
+            my $sw = get_decomposed_at_yx($y2, $x2);
+            if ($sw && $sw =~ /(.)(\S).(.)/) {
+                debug("sw = '$sw';  => '" .
+                      $1 . " " . $point_right{$2} . $3 . "'\n");
+                $sw = $1 . " " . $point_right{$2} . $3;
+            }
+            # Make fillers
+            my @fillers = ();
+            for (my $r = $y1; $r <= $y2; $r++) {
+                my $above   = $r == $y1
+                              ? get_decomposed_at_yx($r - 1, $x2)
+                              : " ";
+                my $below   = $r == $y2
+                              ? get_decomposed_at_yx($r + 1, $x2)
+                              : " ";
+                my $rightof = get_decomposed_at_yx($r, $x2 + 1);
+                my $leftof  = $r == $y1 ? $nw :
+                              $r == $y2 ? $sw :
+                              get_decomposed_at_yx($r, $x2);
+                push @fillers, make_filler($above, $below, $rightof, $leftof);
+            }
+            for (my $r = $y1; $r <= $y2; $r++) {
+                my $str = get_substr_at_yx($r, $x1, $x2 - $x1 + 1);
+                my $filler = shift @fillers;
+                set_substr_at_yx($str.$filler, $r, $x1 - 1);
+            }
+            set_substr_at_yx($composed{$nw}, $y1, $x2-1) if $nw && $composed{$nw};
+            set_substr_at_yx($composed{$sw}, $y2, $x2-1) if $sw && $composed{$sw};
+            $selx--; $x--;
+        }
+        update_selection;
     }
 }
 
@@ -793,13 +921,16 @@ sub handle_input($) {
         # CSI ? 25 l    DECTCEM Hides the cursor.
         $selector = 'stroke';
         print "\e[?25l"; # hide cursor
+    } elsif ($_ eq "m") {
+        # Switch to 'move' mode # if there is a selection larger than 1x1
+        message("Move selected area using the arrow keys, then RETURN");
+        $mode = 'move'; # if ($x2 > $x1 || $y2 > $y1);
     } elsif ($_ eq "q") {
-        debug("q=quit\n");
+        #debug("q=quit\n");
     } elsif ($_ eq "h") {
-        debug("h=help\n");
         message("Press h again to close the help box");
         print "\e[?25l"; # hide cursor
-        $help = 1;
+        $mode = "help";
     } elsif (/^\e/) {
         s/\e/\\e/g;
         debug("Unhandled escape sequence: $_\n");
@@ -890,13 +1021,15 @@ $y1 = $y2 = $y = int($lines / 2);
 while(1) {
     render();
     my $c = get_input_sequence();
-    if ($help) {
+    if ($mode eq "help") {
         # handle input when help box is open
         if ($c =~ /^(?:h|q|\r|\e\e)$/) {
-            $help = 0;
+            $mode = 'draw';
             print "\e[?25h"; # show cursor
             message("");
         }
+    } elsif ($mode eq 'move') {
+        handle_move_input($c);
     } elsif (!defined($selector)) {
         handle_input($c);
         last if $c eq "q";
@@ -904,10 +1037,3 @@ while(1) {
         handle_stoke_selector_input($c);
     }
 }
-#for my $str (@$rows) {
-#    if (defined $str) {
-#        print "$str\n";
-#    } else {
-#        print "\n";
-#    }
-#}
