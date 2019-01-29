@@ -721,7 +721,7 @@ sub draw_diagonal($) {
 
 sub message {
     $message = shift;
-    debug($message . "\n");
+    #debug($message . "\n");
 }
 
 #                          ▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒
@@ -751,6 +751,40 @@ sub handle_stoke_selector_input($) {
             $selected_stroke-- if $selected_stroke > 0;
         }
     }
+}
+
+# Returns the selection as an array-ref of strings, padded to equal length
+sub copy_selection() {
+    return undef if $x1 >= $x2 && $y1 >= $y2; # 1x1 selection or none
+    my $floating_lines = [];
+    # exclude outward connections
+    # ┼─┼───┼      ┌─┬───┐
+    # ┼─┼───┼  =>  ├─┼───┤
+    # │ │   │      │ │   │
+    # ┼─┼───┼      └─┴───┘
+    my $last_in_row = $x2 - $x1;
+    my $width = $last_in_row + 1;
+    for (my $r = $y1; $r <= $y2; $r++) {
+        my $row = get_substr_at_yx($r, $x1, $width);
+        my @chars = split //, $row;
+        for (my $i = 0; $i <= $last_in_row; $i++) {
+            if ($r == $y1 || $r == $y2 || $i == 0 || $i == $last_in_row) {
+                my $c = $chars[$i];
+                my $decomp = $decomposed{$c};
+                if (defined $decomp) {
+                    substr($decomp, 0, 1, " ") if $r == $y1;          # up
+                    substr($decomp, 1, 1, " ") if $r == $y2;          # down
+                    substr($decomp, 2, 1, " ") if $i == $last_in_row; # right
+                    substr($decomp, 3, 1, " ") if $i == 0;            # left
+                    $c = $composed{$decomp};
+                    $chars[$i] = $c if defined $c;
+                }
+            }
+        }
+        $row = join '', @chars;
+        push @$floating_lines, $row;
+    }
+    return $floating_lines;
 }
 
 sub move_selection_left() {
@@ -834,6 +868,22 @@ sub handle_move_input($) {
     }
 }
 
+# sends an array ref to xclip, if it's installed
+sub copy_to_xclip($) {
+    state $xclip = `which xclip`;
+    if ($xclip) {
+        chomp $xclip;
+        open my $XCLIP, '|-', $xclip, '-selection', 'clipboard'
+            or die "Couldn't open pipe to $xclip: $!";
+        my $lines_ref = shift;
+        print $XCLIP join("\n", @$lines_ref);
+        close $XCLIP;
+        message("Copied to X clipboard");
+    } else {
+        message("Install xclip to copy to the X clipboard");
+    }
+}
+
 # input in drawing mode when no stroke selector is open
 sub handle_input($) {
     $_ = shift;
@@ -865,6 +915,20 @@ sub handle_input($) {
         fill_selection(" ");
     } elsif ($_ eq "\e\e") {
         deselect();
+    } elsif ($_ eq "\x1a") {
+        message("Undo is not implemented");
+    } elsif ($_ eq "\x18") {
+        message("Cut to clipboard is not implemented");
+    } elsif ($_ eq "\x03") {
+        my $copied_lines = copy_selection();
+        if ($copied_lines) {
+            copy_to_xclip($copied_lines) or
+                message("Install xclip to copy to the X clipboard");
+        } else {
+            message("Press q to quit");
+        }
+    } elsif ($_ eq "\x16") {
+        message("Paste from clipboard is not implemented");
     } elsif ($_ eq "x") {
         draw_diagonal("X");
     } elsif ($_ eq "/") {
