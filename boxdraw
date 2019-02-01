@@ -33,6 +33,37 @@ my $debug = 0;            # toggled by -d or --debug
 my $filename;             #
 my $selector = undef;     # Visible 'stroke' (or e.g. 'character') selector
 my $mode = 'draw';        # 'draw', 'move', 'help'
+my $help_page_no = 0;     # Page number (module number of pages)
+my $selected_stroke = 0;  # index in @$stroke_buttons
+
+my $stroke_buttons = [
+    ['┌─┐',
+     '└─┘', 'single'],
+    ['╭─╮',
+     '╰─╯', 'single-rounded'],
+    ['┏━┓',
+     '┗━┛', 'bold'],
+    ['╔═╗',
+     '╚═╝', 'double'],
+    ['┌╌┐',
+     '└╌┘', 'single-bashed'],
+    ['╭╌╮',
+     '╰╌╯', 'single-bashed-rounded'],
+    ['┏╍┓',
+     '┗╍┛', 'bold-bashed'],
+    ['┌┄┐',
+     '└┄┘', 'single-dashed'],
+    ['╭┄╮',
+     '╰┄╯', 'single-dashed-rounded'],
+    ['┏┅┓',
+     '┗┅┛', 'bold-dashed'],
+    ['┌┈┐',
+     '└┈┘', 'single-dotted'],
+    ['╭┈╮',
+     '╰┈╯', 'single-dotted-rounded'],
+    ['┏┉┓',
+     '┗┉┛', 'bold-dotted'],
+];
 #open my $tty, "<+", "/dev/tty";
 
 # TODO: Read from /dev/tty instead of STDIN.
@@ -79,36 +110,6 @@ END {
 };
 
 # --- rendering ---
-
-my $selected_stroke = 0;
-my $stroke_buttons = [
-    ['┌─┐',
-     '└─┘', 'single'],
-    ['╭─╮',
-     '╰─╯', 'single-rounded'],
-    ['┏━┓',
-     '┗━┛', 'bold'],
-    ['╔═╗',
-     '╚═╝', 'double'],
-    ['┌╌┐',
-     '└╌┘', 'single-bashed'],
-    ['╭╌╮',
-     '╰╌╯', 'single-bashed-rounded'],
-    ['┏╍┓',
-     '┗╍┛', 'bold-bashed'],
-    ['┌┄┐',
-     '└┄┘', 'single-dashed'],
-    ['╭┄╮',
-     '╰┄╯', 'single-dashed-rounded'],
-    ['┏┅┓',
-     '┗┅┛', 'bold-dashed'],
-    ['┌┈┐',
-     '└┈┘', 'single-dotted'],
-    ['╭┈╮',
-     '╰┈╯', 'single-dotted-rounded'],
-    ['┏┉┓',
-     '┗┉┛', 'bold-dotted'],
-];
 
 sub render_stroke_selector {
     return if $lines < 4;
@@ -167,24 +168,132 @@ sub render_popup($$) {
 }
 
 sub render_help() {
-    #my @l = <<'End_Lines' =~ m/(\S.*\S)/g;
-    render_popup(
-     '╭───────────────────────────────────────────╮
-      │ Help                                      │
-      ┝━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━┥
-      │ h               Help                      │
-      │ q               Quit                      │
-      │ Arrows          Navigate                  │
-      │ Ctrl + Arrows   Draw                      │
-      │ Shift + Arrows  Select area               │
-      │ TAB             Select stroke             │
-      │ SPACE           Draw borders in selection │
-      │ -, =, b, o      Shorthand for borders of  │
-      │                 some strokes              │
-      │ x, /, \         Draw diagonals in         │
-      │                 selection                 │
-      │                                           │
-      ╰───────────────────────────────────────────╯', "\e[45m");
+    state $pages = [<<'EOT',
+╭───────────────────────────────────────────╮
+│ Help                                      │
+┝━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━┥
+│ h               Help                      │
+│ q               Quit                      │
+│ ARROWS          Navigate                  │
+│ CTRL + ARROWS   Draw                      │
+│ TAB             Select stroke             │
+│ SHIFT + ARROWS  Select area               │
+│ RETURN          Draw borders in selection │
+│ DELETE          Clear selected area       │
+┝━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━┥
+│                 h = hide      n = next    │
+╰───────────────────────────────────────────╯
+EOT
+        <<'EOT',
+╭───────────────────────────────────────────╮
+│ Help: Box-drawing                         │
+┝━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━┥
+│ -               ──── Single stroke    ╶┐  │
+│ b               ━━━━ Bold stroke          │
+│ =               ════ Double stroke        │
+│ o               ──── Rounded corners  ╶╮  │
+│ TAB             Stroke menu               │
+│ RETURN          Draw borders in selection │
+│                                           │
+│ x, /, \         Draw diagonals  ╲ ╱    ╱  │
+│                 in quare         ╳    ╱   │
+│                 selection       ╱ ╲  ╱    │
+│                                           │
+┝━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━┥
+│ p = previous    h = hide      n = next    │
+╰───────────────────────────────────────────╯
+EOT
+        <<'EOT',
+╭───────────────────────────────────────────╮
+│ Help: Select, copy & paste                │
+┝━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━┥
+│ SHIFT + Arrows  Select                    │
+│ SPACE, Arrows   Select, "sticky"          │
+│ SPACE           Deselect                  │
+│ CTRL + c        Copy to X clipboard       │
+│ CTRL + x        NOT IMPLEMENTED (cut)     │
+│ CTRL + v        NOT IMPLEMENTED (paste)   │
+│ CTRL + s        NOT IMPLEMENTED (save)    │
+│ m, LEFT ARROW   Move/pull (experimental,  │
+│                 will definitely change)   │
+┝━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━┥
+│ p = previous    h = hide      n = next    │
+╰───────────────────────────────────────────╯
+EOT
+        <<'EOT',
+╭───────────────────────────────────────────╮
+│ Help: 2×2 sub-blocks (NOT IMPLEMENTED)    │
+┝━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━┥
+│ 1, 3, 7, 9,     Toggle 2×2 sub-blocks     │
+│ 2, 4, 6, 8,     Half block on one side    │
+│ 5               Full block                │
+│                              Hint:        │
+│                              Use numpad!  │
+│                  ░░░░░░░░░    ▁   ▁   ▁   │
+│                  ░ ░▝░▘░▀░   ▕▘▏7▕▀▏8▕▝▏9 │
+│                  ░░░░░░░░░    ▔   ▔   ▔   │
+│                  ░▗░▐░▚░▜░    ▁   ▁   ▁   │
+│                  ░░░░░░░░░   ▕▌▏4▕█▏5▕▐▏6 │
+│                  ░▖░▞░▌░▛░    ▔   ▔   ▔   │
+│                  ░░░░░░░░░    ▁   ▁   ▁   │
+│                  ░▄░▟░▙░█░   ▕▖▏1▕▄▏2▕▗▏3 │
+│                  ░░░░░░░░░    ▔   ▔   ▔   │
+│                                           │
+┝━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━┥
+│ p = previous    h = hide      n = next    │
+╰───────────────────────────────────────────╯
+EOT
+        <<'EOT',
+╭───────────────────────────────────────────╮
+│ Help: More sub-blocks (NOT IMPLEMENTED)   │
+┝━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━┥
+│ 2, 4, 6, 8      When repeated, thin block │
+│                 on one side               │
+│                                           │
+│                  ░░░░░░░░░        ▁       │
+│                  ░▔░▁░▕░▏░       ▕▔▏8     │
+│                  ░░░░░░░░░        ▔       │
+│                               ▁   ▁   ▁   │
+│ 5 repeatedly    Rotate fill  ▕▏▏4▕░▏5▕▕▏6 │
+│                   ▁▁▁▁▁       ▔   ▔   ▔   │
+│                  ▕█▓▒░ ▏          ▁       │
+│                   ▔▔▔▔▔          ▕▁▏2     │
+│                   55555           ▔       │
+│                                           │
+┝━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━┥
+│ p = previous    h = hide      n = next    │
+╰───────────────────────────────────────────╯
+EOT
+        <<'EOT',
+╭───────────────────────────────────────────╮
+│ Help: Block dragrams (NOT IMPLEMENTED)    │
+┝━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━┥
+│                                           │
+│                   012345678               │
+│ u (repeatedly)   ░░░░░░░░░░░  Upward      │
+│ U (backwards)    ░ ▁▂▃▄▅▆▇█░  diagram     │
+│                  ░░░░░░░░░░░              │
+│                                           │
+│                  ░░░                      │
+│ r (repeatedly)   ░█░ 8        Left-to-    │
+│ R (backwards)    ░▉░ 7        right       │
+│                  ░▊░ 6        diagram     │
+│                  ░▋░ 5                    │
+│                  ░▌░ 4                    │
+│                  ░▍░ 3                    │
+│                  ░▎░ 2        This        │
+│                  ░▏░ 1        should also │
+│                  ░ ░ 0        work with a │
+│                  ░░░          selection.  │
+│                                           │
+┝━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━┥
+│ p = previous    h = hide      n = next    │
+╰───────────────────────────────────────────╯
+EOT
+    ];
+    render_popup($pages->[$help_page_no % $#$pages], "\e[30;47m");
+    # 105 = bright purple background
+    # "\e[45m"
 }
 
 sub render_content() {
@@ -1087,10 +1196,16 @@ while(1) {
     my $c = get_input_sequence();
     if ($mode eq "help") {
         # handle input when help box is open
-        if ($c =~ /^(?:h|q|\r|\e\e)$/) {
+        if ($c =~ /^(?:h|q|\e\e)$/) {
             $mode = 'draw';
             print "\e[?25h"; # show cursor
             message("");
+        } elsif ($c =~ /^(?:n| |\e\[B|\e\[C|\e\[6~)$/) {
+            # n, SPACE, DOWN, RIGHT, PAGE DOWN
+            $help_page_no++;
+        } elsif ($c =~ /^(?:p|\e\[A|\e\[D|\e\[5~)$/) {
+            # p, UP, LEFT, PAGE UP
+            $help_page_no--;
         }
     } elsif ($mode eq 'move') {
         handle_move_input($c);
