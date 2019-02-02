@@ -274,18 +274,18 @@ EOT
 │ 2, 4, 6, 8      When repeated, thin block │
 │                 on one edge               │
 │ 5               When repeated, rotate     │
-│                 filled block density.     │
-│ Use numpad!                               │
-│      ░░░                                  │
-│      ░▔░8                                 │
+│                 over the filled blocks    │
+│ Use numpad!      ▁▁  ▁▁  ▁▁  ▁▁  ▁▁       │
+│      ░░░        ▕██▏▕▓▓▏▕▒▒▏▕░░▏▕  ▏      │
+│      ░▔░8        ▔▔  ▔▔  ▔▔  ▔▔  ▔▔       │
 │      ░░░                                  │
 │                                           │
-│ ░░░  ░░░  ░░░           ▁▁▁▁▁             │
-│ ░▏░4 ░▓░5 ░▕░6         ▕█▓▒░ ▏            │
-│ ░░░  ░░░  ░░░           ▔▔▔▔▔             │
-│                        Above: various     │
-│      ░░░               filled blocks with │
-│      ░▁░2              thin edges around. │
+│ ░░░  ░░░  ░░░                             │
+│ ░▏░4 ░▓░5 ░▕░6                            │
+│ ░░░  ░░░  ░░░                             │
+│                                           │
+│      ░░░                                  │
+│      ░▁░2                                 │
 │      ░░░                                  │
 │                                           │
 ┝━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━┥
