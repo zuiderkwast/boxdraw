@@ -65,6 +65,7 @@ my $stroke_buttons = [
     ['┏┉┓',
      '┗┉┛', 'bold-dotted'],
 ];
+
 #open my $tty, "<+", "/dev/tty";
 
 # TODO: Read from /dev/tty instead of STDIN.
@@ -244,10 +245,10 @@ EOT
 EOT
         <<'EOT',
 ╭───────────────────────────────────────────╮
-│ Help: 2×2 sub-blocks (NOT IMPLEMENTED)    │
+│ Help: Semigraphics, 2×2 subdivision       │
 ┝━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━┥
-│ 1, 3, 7, 9,     Toggle 2×2 sub-blocks     │
-│ 2, 4, 6, 8,     Half block on one side    │
+│ 1, 3, 7, 9,     Quarter block, toggle     │
+│ 2, 4, 6, 8,     Half block                │
 │ 5               Full block                │
 │                                           │
 │ Use numpad!                               │
@@ -269,12 +270,12 @@ EOT
 EOT
         <<'EOT',
 ╭───────────────────────────────────────────╮
-│ Help: More sub-blocks (NOT IMPLEMENTED)   │
+│ Help: More block characters               │
 ┝━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━┥
 │ 2, 4, 6, 8      When repeated, thin block │
-│                 on one edge               │
-│ 5               When repeated, rotate     │
-│                 over the filled blocks    │
+│                 on each side              │
+│ 5               When repeated, alternate  │
+│                 filled blocks             │
 │ Use numpad!      ▁▁  ▁▁  ▁▁  ▁▁  ▁▁       │
 │      ░░░        ▕██▏▕▓▓▏▕▒▒▏▕░░▏▕  ▏      │
 │      ░▔░8        ▔▔  ▔▔  ▔▔  ▔▔  ▔▔       │
@@ -294,7 +295,7 @@ EOT
 EOT
         <<'EOT',
 ╭───────────────────────────────────────────╮
-│ Help: Block dragrams (NOT IMPLEMENTED)    │
+│ Help: Block dragrams                      │
 ┝━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━┥
 │                                           │
 │                   012345678               │
@@ -426,7 +427,19 @@ sub fill_selection {
     for (my $r = $y1; $r <= $y2; $r++) {
         set_substr_at_yx($repeated_s, $r, $x1);
     }
-    deselect();
+    $sticky_selection = 0;
+}
+
+sub rotate_fill_selection(@) {
+    my $current = get_char_at_yx($y1, $x1);
+    my $fill = $_[0];
+    for (my $i = 0; $i < @_; $i++) {
+        if ($current eq $_[$i]) {
+            $fill = $_[($i + 1) % @_];
+            last;
+        }
+    }
+    fill_selection($fill);
 }
 
 # Order the coordinates of a rectangle as
@@ -819,9 +832,62 @@ sub draw_borders {
     deselect();
 }
 
-sub min {
-    my ($a, $b) = (@_);
-    return $a <= $b ? $a : $b;
+# Decomposed in the order nw, ne, sw, se
+my %decomposed_block = (
+    "▘" => "▘   ",
+    "▝" => " ▝  ",
+    "▀" => "▘▝  ",
+    "▗" => "   ▗",
+    "▐" => " ▝ ▗",
+    "▚" => "▘  ▗",
+    "▜" => "▘▝ ▗",
+    "▖" => "  ▖ ",
+    "▞" => " ▝▖ ",
+    "▌" => "▘ ▖ ",
+    "▛" => "▘▝▖ ",
+    "▄" => "  ▖▗",
+    "▟" => " ▝▖▗",
+    "▙" => "▘ ▖▗",
+    "█" => "▘▝▖▗",
+);
+my %composed_block =
+    map { $decomposed_block{$_} => $_ } keys %decomposed_block;
+
+sub toggle_subblock($@) {
+    my $toggle_subblock = shift;
+    my $old = get_char_at_yx($y1, $x1);
+    my $new;
+    if ($old eq $toggle_subblock) {
+        # rotate between alternative blocks or " " finally
+        $new = @_ ? $_[0] : " ";
+        for (my $i = 0; $i < @_; $i++) {
+            if ($old eq $_[$i]) {
+                $new = $i < $#_ ? $_[$i + 1] : " ";
+                last;
+            }
+        }
+        debug("Rotate from $old to $new\n");
+    } else {
+        my $decomposed = $decomposed_block{$old};
+        if ($decomposed) {
+            my @decomp = split //, $decomposed;
+            my @mask = split //, $decomposed_block{$toggle_subblock};
+            # XOR with mask
+            for (my $i = 0; $i < 4; $i++) {
+                if ($mask[$i] ne " ") {
+                    $decomp[$i] = $decomp[$i] eq " " ? $mask[$i] : " ";
+                }
+            }
+            debug("'$old' + '$toggle_subblock' => '$decomposed' + '${decomposed_block{$toggle_subblock}}'");
+            my $decomposed = join '', @decomp;
+            $new = $composed_block{$decomposed};
+            debug(" => '$decomposed' => '$new'\n");
+        } else {
+            $new = $toggle_subblock;
+        }
+    }
+    fill_selection($new);
+    #set_substr_at_yx($new, $y, $x);
 }
 
 ## Draws a big X over the selected area using diagonal box drawing characters.
@@ -1023,6 +1089,17 @@ sub copy_to_xclip($) {
     }
 }
 
+sub select_stroke($) {
+    my $name = shift;
+    for (my $i = 0; $i < @$stroke_buttons; $i++) {
+        if ($$stroke_buttons[$i][2] eq $name) {
+            $selected_stroke = $i;
+            return;
+        }
+    }
+    die "Stroke $name doesn't exist"; # shouldn't happen
+}
+
 # input in drawing mode when no stroke selector is open
 sub handle_input($) {
     $_ = shift;
@@ -1075,23 +1152,64 @@ sub handle_input($) {
     } elsif ($_ eq "\\") {
         draw_diagonal("\\");
     } elsif ($_ eq "-") {
+        select_stroke('single');
         draw_borders_at_selection("single");
     } elsif ($_ eq "o") {
+        select_stroke('single-rounded');
         draw_borders_at_selection("single-rounded");
     } elsif ($_ eq "b") {
+        select_stroke('bold');
         draw_borders_at_selection("bold");
     } elsif ($_ eq "=") {
+        select_stroke('double');
         draw_borders_at_selection("double");
-    } elsif ($_ eq "4") {
-        fill_selection("█");
-    } elsif ($_ eq '3') {
-        fill_selection("▓");
-    } elsif ($_ eq "2") {
-        fill_selection("▒");
     } elsif ($_ eq "1") {
-        fill_selection("░");
-    } elsif ($_ eq "0") {
-        fill_selection(" ");
+        toggle_subblock("▖");
+    } elsif ($_ eq "2") {
+        toggle_subblock("▄", "▁");
+    } elsif ($_ eq "3") {
+        toggle_subblock("▗");
+    } elsif ($_ eq "4") {
+        toggle_subblock("▌", "▏");
+    } elsif ($_ eq "5") {
+        rotate_fill_selection("█", "▓", "▒", "░", " ");
+    } elsif ($_ eq "6") {
+        toggle_subblock("▐", "▕");
+    } elsif ($_ eq "7") {
+        toggle_subblock("▘");
+    } elsif ($_ eq "8") {
+        toggle_subblock("▀", "▔");
+    } elsif ($_ eq "9") {
+        toggle_subblock("▝");
+    } elsif ($_ eq "u") {
+        # Upward diagram
+        rotate_fill_selection("▁", "▂", "▃", "▄", "▅", "▆", "▇", "█", " ");
+    } elsif ($_ eq "U") {
+        # Upward diagram, backwards
+        rotate_fill_selection("█", "▇", "▆", "▅", "▄", "▃", "▂", "▁", " ");
+    } elsif ($_ eq "r") {
+        # Left-to-right diagram
+        rotate_fill_selection("▏", "▎", "▍", "▌", "▋", "▊", "▉", "█", " ");
+    } elsif ($_ eq "R") {
+        # Left-to-right diagram, backwards
+        rotate_fill_selection("█", "▉", "▊", "▋", "▌", "▍", "▎", "▏", " ");
+    } elsif ($_ eq "<") {
+        rotate_fill_selection("<", "◀", "◁", "≪"); # "◄"
+    } elsif ($_ eq ">") {
+        rotate_fill_selection(">", "▶", "▷", "≫"); # "►"
+    } elsif ($_ eq "v") {
+        rotate_fill_selection("∨", "▼", "▽", "V"); # "⌄"
+    } elsif ($_ eq "^") {
+        rotate_fill_selection("∧", "▲", "△", "Λ"); # "⌃"
+    } elsif ($_ eq ".") {
+        rotate_fill_selection("●", "•", "·", "○", "◉", "◎", "◍");
+    } elsif ($_ eq ",") {
+        rotate_fill_selection(qw(◆ ◇ ◈ ■ □ ▢ ▣ ⊞ ⊟ ⊠ ⊡));
+    } elsif ($_ eq "*") {
+        rotate_fill_selection(qw(⋆ ∗ × ⨂ ⨁ ⨀ ⍟ ⊕ ⊖ ⊗ ⊘ ⊙ ⊚ ⊛ ⊜ ⊝));
+    } elsif ($_ eq "g") {
+        rotate_fill_selection("⏚", "⏛", "⏀", "⏁", "⏂", "⏃", "⏄", "⏅",
+                              "⏆", "⏇", "⏈", "⏉", "⏊");
     } elsif ($_ eq "e") {
         # Emoji test. These should be full-width, but some aren't.
         # set_char("\x{1F600}"); # :D full-width
