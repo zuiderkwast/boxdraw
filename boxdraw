@@ -207,8 +207,8 @@ EOT
 ╭───────────────────────────────────────────╮
 │ Help: Select, copy & paste                │
 ┝━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━┥
-│ SHIFT + Arrows  Select                    │
-│ SPACE, Arrows   Select, "sticky"          │
+│ SHIFT + ARROWS  Select                    │
+│ SPACE, ARROWS   Select, "sticky"          │
 │ SPACE           Deselect                  │
 │ CTRL + c        Copy to X clipboard       │
 │ CTRL + x        NOT IMPLEMENTED (cut)     │
@@ -227,17 +227,19 @@ EOT
 │ 1, 3, 7, 9,     Toggle 2×2 sub-blocks     │
 │ 2, 4, 6, 8,     Half block on one side    │
 │ 5               Full block                │
-│                              Hint:        │
-│                              Use numpad!  │
-│                  ░░░░░░░░░    ▁   ▁   ▁   │
-│                  ░ ░▝░▘░▀░   ▕▘▏7▕▀▏8▕▝▏9 │
-│                  ░░░░░░░░░    ▔   ▔   ▔   │
-│                  ░▗░▐░▚░▜░    ▁   ▁   ▁   │
-│                  ░░░░░░░░░   ▕▌▏4▕█▏5▕▐▏6 │
-│                  ░▖░▞░▌░▛░    ▔   ▔   ▔   │
-│                  ░░░░░░░░░    ▁   ▁   ▁   │
-│                  ░▄░▟░▙░█░   ▕▖▏1▕▄▏2▕▗▏3 │
-│                  ░░░░░░░░░    ▔   ▔   ▔   │
+│                                           │
+│ Use numpad!                               │
+│ ░░░  ░░░  ░░░          Press multiple     │
+│ ░▘░7 ░▀░8 ░▝░9         times to compose   │
+│ ░░░  ░░░  ░░░          all possible       │
+│                        combinations:      │
+│ ░░░  ░░░  ░░░                             │
+│ ░▌░4 ░█░5 ░▐░6         ░░░░░░░░░░░░░░░░░  │
+│ ░░░  ░░░  ░░░          ░ ░▝░▘░▀░▗░▐░▚░▜░  │
+│                        ░░░░░░░░░░░░░░░░░  │
+│ ░░░  ░░░  ░░░          ░▖░▞░▌░▛░▄░▟░▙░█░  │
+│ ░▖░1 ░▄░2 ░▗░3         ░░░░░░░░░░░░░░░░░  │
+│ ░░░  ░░░  ░░░                             │
 │                                           │
 ┝━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━┥
 │ p = previous    h = hide      n = next    │
@@ -248,17 +250,21 @@ EOT
 │ Help: More sub-blocks (NOT IMPLEMENTED)   │
 ┝━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━┥
 │ 2, 4, 6, 8      When repeated, thin block │
-│                 on one side               │
+│                 on one edge               │
+│ 5               When repeated, rotate     │
+│                 filled block density.     │
+│ Use numpad!                               │
+│      ░░░                                  │
+│      ░▔░8                                 │
+│      ░░░                                  │
 │                                           │
-│                  ░░░░░░░░░        ▁       │
-│                  ░▔░▁░▕░▏░       ▕▔▏8     │
-│                  ░░░░░░░░░        ▔       │
-│                               ▁   ▁   ▁   │
-│ 5 repeatedly    Rotate fill  ▕▏▏4▕░▏5▕▕▏6 │
-│                   ▁▁▁▁▁       ▔   ▔   ▔   │
-│                  ▕█▓▒░ ▏          ▁       │
-│                   ▔▔▔▔▔          ▕▁▏2     │
-│                   55555           ▔       │
+│ ░░░  ░░░  ░░░           ▁▁▁▁▁             │
+│ ░▏░4 ░▓░5 ░▕░6         ▕█▓▒░ ▏            │
+│ ░░░  ░░░  ░░░           ▔▔▔▔▔             │
+│                        Above: various     │
+│      ░░░               filled blocks with │
+│      ░▁░2              thin edges around. │
+│      ░░░                                  │
 │                                           │
 ┝━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━┥
 │ p = previous    h = hide      n = next    │
@@ -287,18 +293,20 @@ EOT
 │                  ░░░          selection.  │
 │                                           │
 ┝━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━┥
-│ p = previous    h = hide      n = next    │
+│ p = previous    h = hide                  │
 ╰───────────────────────────────────────────╯
 EOT
     ];
-    render_popup($pages->[$help_page_no % $#$pages], "\e[30;47m");
-    # 105 = bright purple background
-    # "\e[45m"
+    # Sanitize page number too within existing pages
+    $help_page_no = 0 if $help_page_no < 0;
+    $help_page_no = $#$pages if $help_page_no > $#$pages;
+    # Render the page
+    render_popup($pages->[$help_page_no], "\e[30;47m");
 }
 
 sub render_content() {
 
-    my $sel_color = $mode eq 'move' ? "\e[45m"  # purple?
+    my $sel_color = $mode eq 'move' ? "\e[45m"  # purple
                                     : "\e[43m"; # yellow
 
     my $last_content_line = defined($selector) ? $lines - 4 : $lines - 1;
