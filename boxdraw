@@ -30,8 +30,9 @@ my $sticky_selection = 0; # when on, arrow keys extend selection
 my $message = "h = help, q = quit"; # message to display in status bar
 my $rows = [];            # text lines without \n
 my $debug = 0;            # toggled by -d or --debug
+my $show_splash = 1;      # spash screen at startup, disable with --no-splash
 my $filename;             #
-my $selector = undef;     # Visible 'stroke' (or e.g. 'character') selector
+my $selector;             # Visible 'stroke' (or e.g. 'character') selector
 my $mode = 'draw';        # 'draw', 'move', 'help'
 my $help_page_no = 0;     # Page number (module number of pages)
 my $selected_stroke = 0;  # index in @$stroke_buttons
@@ -75,11 +76,13 @@ die "STDOUT is not a tty" unless -t STDOUT;
 
 # Read ARGV
 while ($_ = shift) {
-    if (/^-d|--debug$/) { $debug = 1; next };
-    if (/^--$/)         { $filename = shift; last };
-    if (/^[^-]/)        { $filename = $_; next };
+    if (/^-d|--debug$/)  { $debug = 1; next };
+    if (/^--no-splash$/) { $show_splash = 0; next };
+    if (/^--$/)          { $filename = shift; last };
+    if (/^[^-]/)         { $filename = $_; next };
     die "Unrecognized option: $_";
 }
+$show_splash = 0 if defined $filename;
 
 sub debug {
     print STDERR @_ if $debug;
@@ -113,19 +116,19 @@ END {
 
 sub render_stroke_selector {
     return if $lines < 4;
-    print "\e[", $lines - 3 , ";1H\e[42m";
+    print "\e[", $lines - 3 , ";1H\e[30;103m";
     printf "%-*s", $cols, "Stroke";
     my $n = @$stroke_buttons;
     for (my $line = 0; $line < 2; $line++) {
         my $r = $lines - 2 + $line;
         print "\e[$r;1H";
-        print "\e[42m";
+        print "\e[30;103m";
         # Print a line for each of the strokes
         for (my $i = 0; $i < $n; $i++) {
             # blue (selected) or green
             print "\e[44m" if $i == $selected_stroke;
             print $$stroke_buttons[$i][$line];
-            print "\e[42m" if $i == $selected_stroke;
+            print "\e[103m" if $i == $selected_stroke;
         }
         # Print padding for the rest of the line
         print " " x ($cols - 3 * $n);
@@ -150,7 +153,8 @@ sub render_status_bar () {
     $padded_msg .= $right_msg;
 
     my $message_y = $lines;
-    printf "\e[$message_y;1H\e[42m$padded_msg\e[49m";
+    my $color = $message ? "101" : "103";
+    printf "\e[$message_y;1H\e[30;${color}m$padded_msg\e[49m";
 }
 
 sub render_popup($$) {
@@ -165,6 +169,24 @@ sub render_popup($$) {
     }
     print "\e[m" if $color_esc_seq;  # reset color
     print "\e[?25l";                 # hide cursor
+}
+
+sub render_splash() {
+    state $splash = <<'EOT';
+╭───────────────────────────────────────────╮
+│                                           │
+│       ╓┰─────────────┰─────────────╴      │
+│       ║┃             ┃ ════════════╗      │
+│       ║┠──╮╭──╮╲ ╱╭──┦┎──╮╭──┒╷ ╻ ╷║      │
+│       ║┃▒░││▒░│ ╳ │▒░│┃   │▒░┃│ ┃ │║      │
+│       ║┖──╯╰──╯╱ ╲╰──╯╹   ╰──┚╰─┸─╯║      │
+│       ╚════════════════════════════╝      │
+│                                           │
+┝━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━┥
+│               PRESS ANY KEY               │
+╰───────────────────────────────────────────╯
+EOT
+    render_popup($splash, "\e[30;105m");
 }
 
 sub render_help() {
@@ -1199,6 +1221,10 @@ update_window_size();
 # center cursor
 $x1 = $x2 = $x = int($cols / 2);
 $y1 = $y2 = $y = int($lines / 2);
+if ($show_splash) {
+    render_splash();
+    get_input_sequence();
+}
 while(1) {
     render();
     my $c = get_input_sequence();
