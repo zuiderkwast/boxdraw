@@ -1049,8 +1049,8 @@ sub handle_input($) {
             debug("Arrow key with modifier $2\n")
         }
         $move = $3;
-    } elsif ($_ eq "\e[3~") {
-        # delete
+    } elsif ($_ eq "\e[3~" || $_ eq "\x7f") {
+        # delete or backspace
         fill_selection(" ");
     } elsif ($_ eq "\e\e") {
         deselect();
@@ -1104,11 +1104,7 @@ sub handle_input($) {
         update_selection;
     } elsif ($_ eq " ") {
         # Space = select/deselect
-        if ($y2 > $y1 || $x2 > $x1) {
-            my $stroke = $$stroke_buttons[$selected_stroke][2];
-            draw_borders_at_selection($stroke);
-            deselect();
-        } elsif ($sticky_selection) {
+        if ($y2 > $y1 || $x2 > $x1 || $sticky_selection) {
             deselect();
         } else {
             # Start sticky select
@@ -1116,6 +1112,11 @@ sub handle_input($) {
             $selx = $x;
             $sely = $y;
             update_selection;
+        }
+    } elsif ($_ eq "\r") {
+        if ($y2 > $y1 || $x2 > $x1) {
+            my $stroke = $$stroke_buttons[$selected_stroke][2];
+            draw_borders_at_selection($stroke);
         }
     } elsif ($_ eq "\t") {
         # toggle stroke selector
