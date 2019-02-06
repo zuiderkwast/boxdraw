@@ -33,7 +33,7 @@ my $debug = 0;            # toggled by -d or --debug
 my $show_splash = 1;      # spash screen at startup, disable with --no-splash
 my $filename;             #
 my $selector;             # Visible 'stroke' (or e.g. 'character') selector
-my $mode = 'draw';        # 'draw', 'move', 'help'
+my $mode = 'draw';        # 'draw', 'move', 'help', 'text'
 my $help_page_no = 0;     # Page number (module number of pages)
 my $selected_stroke = 0;  # index in @$stroke_buttons
 
@@ -140,7 +140,7 @@ sub render_stroke_selector {
 sub render_status_bar () {
     my $left_msg = " $message";
     my $stroke_ind = $$stroke_buttons[$selected_stroke][0];
-    my @right_msgs = ();
+    my @right_msgs = ($mode);
     if ($x2 != $x1 || $y2 != $y1) {
         push @right_msgs, ($x2 - $x1 + 1) . "x" . ($y2 - $y1 + 1);
     }
@@ -154,7 +154,9 @@ sub render_status_bar () {
     $padded_msg .= $right_msg;
 
     my $message_y = $lines;
-    my $color = $message ? "101" : "103";
+    my $color = $message ? "101" :
+                $mode eq "text" ? "104" :
+                "103"; # yellow
     printf "\e[$message_y;1H\e[30;${color}m$padded_msg\e[49m";
 }
 
@@ -1120,6 +1122,50 @@ sub handle_move_input($) {
     }
 }
 
+sub handle_text_input($) {
+    $_ = shift;
+    message("");
+    if ($_ eq "\e[2~" || $_ eq "\e\e") {
+        # INSERT or ESC-ESC exits text mode
+        $mode = 'draw';
+    } elsif (/^\e\[([A-D])$/) {
+        my $move = $1;
+        if ($move eq "A") {
+            $y-- if $y > 1;
+        } elsif ($move eq "B") {
+            $y++ if $y < $lines;
+        } elsif ($move eq "C") {
+            $x++ if $x < $cols;
+        } elsif ($move eq "D") {
+            $x-- if $x > 1;
+        }
+        $selx = $x; $sely = $y;
+        update_selection();
+    } elsif ($_ eq "\r") {
+        # Search backward for normal text to find starting column
+        my $line = get_substr_at_yx($y, 1, $x - 1);
+        if ($line =~ /[\p{Letter}\p{Number}\p{Punct}]+
+                      (?:
+                           \s{1,2}
+                           [\p{Letter}\p{Number}\p{Punct}]+
+                      )*\s{0,2}$/x) {
+            $x = length($`) + 1;
+        }
+        $y++ if $y < $lines;
+        $selx = $x; $sely = $y;
+        update_selection();
+    } elsif ($_ eq "\x7f" || $_ eq "\b") {
+        $x-- if $x >= 1; # backspace
+        set_char(" ");
+    } elsif ($_ eq "\e[3~") {
+        set_char(" "); # DELETE = SPACE (in overwrite mode)
+    } elsif (ord($_) >= 32) {
+        # printable character (with unicode exceptions)
+        set_char($_);
+        $x++ if $x < $cols;
+    }
+}
+
 # sends an array ref to xclip, if it's installed
 sub copy_to_xclip($) {
     state $xclip = `which xclip`;
@@ -1173,7 +1219,7 @@ sub handle_input($) {
             debug("Arrow key with modifier $2\n")
         }
         $move = $3;
-    } elsif ($_ eq "\e[3~" || $_ eq "\x7f") {
+    } elsif ($_ eq "\e[3~" || $_ eq "\x7f" || $_ eq "\b") {
         # delete or backspace
         fill_selection(" ");
     } elsif ($_ eq "\e\e") {
@@ -1297,6 +1343,8 @@ sub handle_input($) {
         # Switch to 'move' mode # if there is a selection larger than 1x1
         message("Move selected area using the arrow keys, then RETURN");
         $mode = 'move'; # if ($x2 > $x1 || $y2 > $y1);
+    } elsif ($_ eq "t" || $_ eq "\e[2~") {
+        $mode = 'text'; # t or INSERT
     } elsif ($_ eq "q") {
         #debug("q=quit\n");
     } elsif ($_ eq "h") {
@@ -1391,6 +1439,7 @@ update_window_size();
 $x1 = $x2 = $x = int($cols / 2);
 $y1 = $y2 = $y = int($lines / 2);
 if ($show_splash) {
+    render();
     render_splash();
     get_input_sequence();
 }
@@ -1412,6 +1461,8 @@ while(1) {
         }
     } elsif ($mode eq 'move') {
         handle_move_input($c);
+    } elsif ($mode eq 'text') {
+        handle_text_input($c);
     } elsif (!defined($selector)) {
         handle_input($c);
         last if $c eq "q";
