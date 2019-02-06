@@ -154,9 +154,9 @@ sub render_status_bar () {
     $padded_msg .= $right_msg;
 
     my $message_y = $lines;
-    my $color = $message ? "101" :
-                $mode eq "text" ? "104" :
-                "103"; # yellow
+    my $color = $message        ? "102" :   # green (was 101=red)
+                $mode eq "text" ? "104" :   # blue
+                                  "103";    # yellow
     printf "\e[$message_y;1H\e[30;${color}m$padded_msg\e[49m";
 }
 
@@ -323,7 +323,7 @@ EOT
 EOT
     ];
     # Sanitize page number too within existing pages
-    $help_page_no = 0 if $help_page_no < 0;
+    $help_page_no = 0        if $help_page_no < 0;
     $help_page_no = $#$pages if $help_page_no > $#$pages;
     # Render the page
     render_popup($pages->[$help_page_no], "\e[30;47m");
@@ -406,7 +406,6 @@ sub set_substr_at_yx($$$) {
         return if $s eq " ";
         my $pad = " " x ($x - $len);
         $$rows[$y] .= $pad . $s;
-    #} elsif ($s =~ / $/ && $x + length($s) >= $len) {
     } elsif ($s eq " " && $x + 1 == $len) {
         # Optimized case: Overwriting the last character with space
         # Remove it and trim.
@@ -614,11 +613,6 @@ my %decomposed = (
     "╽" => "╵╻  ",
     "╾" => "  ╶╸",
     "╿" => "╹╷  ",
-    # dotted/dashed: ┄ ┅ ┆ ┇ ┈ ┉ ┊ ┋ ╌ ╍ ╎ ╏
-    # Diagonal: ╱ ╲ ╳
-    #                  Λ (lambda), Ʌ (turned V)
-    # Arrow ideas: <───┼─>  ◄── ◂─── ◀────●
-    #                  V
 );
 
 # The inverse of decompose
@@ -660,13 +654,14 @@ sub combine_decomposed {
     return $c;
 }
 
+# $decomposed is a 4 character string. $stroke is e.g. 'single'
+# Returns a decomposed character with the given stroke
 sub replace_decomposed_with_stroke {
     my ($composed, $stroke) = (@_);
     my (@as) = split //, $composed;
     my (@bs) = split //, $strokes{$stroke};
     my $res = "";
     for (my $i = 0; $i < 4; $i++) {
-        #$as[$i] = $bs[$i] if $as[$i] eq " ";
         $res .= $as[$i] ne " " ? $bs[$i] : $as[$i];
     }
     return $res;
@@ -689,7 +684,7 @@ sub decompose_double_horizontal_at_yx {
 # neighbours to guess if it's "║   ", " ║  " or "║║  ".
 sub decompose_double_vertical_at_yx {
     my ($y, $x) = (@_);
-    my $above_decomp  = $decomposed{get_char_at_yx($y - 1, $x)};
+    my $above_decomp = $decomposed{get_char_at_yx($y - 1, $x)};
     my $below_decomp = $decomposed{get_char_at_yx($y + 1, $x)};
     my $has_conn_above = defined $above_decomp && $above_decomp =~ /^.║..$/;
     my $has_conn_below = defined $below_decomp && $below_decomp =~ /^║...$/;
@@ -717,14 +712,12 @@ sub draw_at_yx {
     my ($c, $y, $x, $stroke) = (@_);
 
     my $is_rounded = $stroke =~ /rounded/;
-    my $is_dotted = $stroke =~ /dotted/;
-    my $is_dashed = $stroke =~ /dashed/;
-    my $is_bashed = $stroke =~ /bashed/;
+    my $is_dotted  = $stroke =~ /dotted/;
+    my $is_dashed  = $stroke =~ /dashed/;
+    my $is_bashed  = $stroke =~ /bashed/;
 
     # strip modifiers, e.g. "single-dashed-rounded" => "single"
-    ($stroke) = split '-', $stroke;
-
-    die unless $stroke;
+    $stroke =~ s/-.*//;
 
     # Decompose old character, e.g. "┐" into " ╷ ╴"
     # Workaround for missing half-versions of "║" and "═"
@@ -751,10 +744,7 @@ sub draw_at_yx {
             $new_decomposed = combine_decomposed($c_decomposed, $old_decomposed);
             $new = $composed{$new_decomposed};
         }
-        unless ($new) {
-            # Still not possible. Just overwrite.
-            $new = $c;
-        }
+        $new = $c unless $new; # Still not possible. Just overwrite.
     } elsif ($stroke eq "single") {
         # Optimization; not really necessary case
         $new = $c;
@@ -868,7 +858,6 @@ sub toggle_subblock($@) {
                 last;
             }
         }
-        debug("Rotate from $old to $new\n");
     } else {
         my $decomposed = $decomposed_block{$old};
         if ($decomposed) {
@@ -880,16 +869,13 @@ sub toggle_subblock($@) {
                     $decomp[$i] = $decomp[$i] eq " " ? $mask[$i] : " ";
                 }
             }
-            debug("'$old' + '$toggle_subblock' => '$decomposed' + '${decomposed_block{$toggle_subblock}}'");
             my $decomposed = join '', @decomp;
             $new = $composed_block{$decomposed};
-            debug(" => '$decomposed' => '$new'\n");
         } else {
             $new = $toggle_subblock;
         }
     }
     fill_selection($new);
-    #set_substr_at_yx($new, $y, $x);
 }
 
 ## Draws a big X over the selected area using diagonal box drawing characters.
@@ -975,7 +961,6 @@ sub draw_brackets_at_selection($) {
 
 sub message {
     $message = shift;
-    #debug($message . "\n");
 }
 
 #                          ▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒
@@ -1055,8 +1040,8 @@ sub make_filler($$$$) {
     my ($above, $below, $rightof, $leftof) = (@_);
     my $down  = $below   && $below   =~ /^(\S)...$/ ? $point_down{$1}  : " ";
     my $up    = $above   && $above   =~ /^.(\S)..$/ ? $point_up{$1}    : " ";
-    my $left  = $leftof  && $leftof  =~ /^..(\S).$/ ? $point_left{$1} : " ";
-    my $right = $rightof && $rightof =~ /^...(\S)$/ ? $point_right{$1}  : " ";
+    my $left  = $leftof  && $leftof  =~ /^..(\S).$/ ? $point_left{$1}  : " ";
+    my $right = $rightof && $rightof =~ /^...(\S)$/ ? $point_right{$1} : " ";
     my $decomp = $up.$down.$right.$left;
     my $c = $composed{$decomp};
     $c = " " unless defined $c;
