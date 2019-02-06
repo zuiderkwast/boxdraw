@@ -924,6 +924,53 @@ sub draw_diagonal($) {
     }
 }
 
+sub draw_bracket_at_yyx($$$$) {
+    # Brackets and integral sign in Miscellaneous Technical (U+2300-U+23FF)
+    state $brackets = "{}()[]S"; # in the same order as in $gfx
+    state $gfx = [["⎧", "⎫", "⎛", "⎞", "⎡", "⎤", "⌠"],
+                  ["⎪", "⎪", "⎜", "⎟", "⎢", "⎥", "⎮"],
+                  ["⎨", "⎬", "⎜", "⎟", "⎢", "⎥", "⎮"],
+                  ["⎪", "⎪", "⎜", "⎟", "⎢", "⎥", "⎮"],
+                  ["⎩", "⎭", "⎝", "⎠", "⎣", "⎦", "⌡"]];
+    my ($bracket, $y1, $y2, $x) = (@_);
+    my $i = $brackets =~ /\Q$bracket\E/ ? length($`) : die;
+    if ($y1 == $y2) {
+        my $char = $bracket eq "{" ? "⎨" :
+                   $bracket eq "}" ? "⎬" :
+                   $bracket;
+        set_substr_at_yx($char, $y1, $x);
+    } elsif ($y1 + 1 == $y2 && $bracket eq "{") {
+        set_substr_at_yx("⎰", $y1, $x); # height 2
+        set_substr_at_yx("⎱", $y2, $x);
+    } elsif ($y1 + 1 == $y2 && $bracket eq "}") {
+        set_substr_at_yx("⎱", $y1, $x); # height 2
+        set_substr_at_yx("⎰", $y2, $x);
+    } elsif ($y2 > $y1) {
+        my $middle_y = $y1 + int(($y2 - $y1) / 2);
+        my $r = $y1;
+        set_substr_at_yx($$gfx[0][$i], $r++, $x);    # $r == $y1       # ⎫
+        set_substr_at_yx($$gfx[1][$i], $r++, $x) while $r < $middle_y; # ⎪
+        set_substr_at_yx($$gfx[2][$i], $r++, $x) if    $r < $y2;       # ⎬
+        set_substr_at_yx($$gfx[3][$i], $r++, $x) while $r < $y2;       # ⎪
+        set_substr_at_yx($$gfx[4][$i], $r,   $x);    # $r == $y2       # ⎭
+    }
+}
+
+sub draw_brackets_at_selection($) {
+    my $bracket = shift; # symbolic; one of (, ), {, }, [, ]
+    state $bracket_pair = {"(" => "()", ")" => "()",
+                           "[" => "[]", "]" => "[]",
+                           "{" => "{}", "}" => "{}"};
+    if ($x1 == $x2 || !defined $bracket_pair->{$bracket}) {
+        draw_bracket_at_yyx($bracket, $y1, $y2, $x1);
+    } else {
+        # If more than one column is selected, draw a pair "{  }".
+        my ($left, $right) = split //, $bracket_pair->{$bracket};
+        draw_bracket_at_yyx($left,  $y1, $y2, $x1);
+        draw_bracket_at_yyx($right, $y1, $y2, $x2);
+    }
+}
+
 sub message {
     $message = shift;
     #debug($message . "\n");
@@ -1151,6 +1198,9 @@ sub handle_input($) {
         draw_diagonal("/");
     } elsif ($_ eq "\\") {
         draw_diagonal("\\");
+    } elsif (/^[{}()\[\]S]$/) {
+        # {}()[]S (where S is a large integral sign)
+        draw_brackets_at_selection($_);
     } elsif ($_ eq "-") {
         select_stroke('single');
         draw_borders_at_selection("single");
