@@ -1,0 +1,86 @@
+╓┰─────────────┰─────────────╴
+║┃             ┃ ════════════╗
+║┠──╮╭──╮╲ ╱╭──┦┎──╮╭──┒╷ ╻ ╷║
+║┃▒░││▒░│ ╳ │▒░│┃   │▒░┃│ ┃ │║
+║┖──╯╰──╯╱ ╲╰──╯╹   ╰──┚╰─┸─╯║
+╚════════════════════════════╝
+
+A drawing program for the terminal
+
+╭──────────────╮
+│ Dependencies │
+╰──────────────╯
+
+  • Perl 5.18 or later
+  • A terminal with colors, UTF-8 character encoding and a font supporting
+    the box-drawing characters
+
+╭──────────────╮
+│ Installation │
+╰──────────────╯
+
+Copy it to e.g. /usr/local/bin/
+
+╭──────────╮
+│ Features │
+╰──────────╯
+
+  • Drawing using all of the Unicode box-drawing characters, i.e. the
+    characters in the range between U+2500 and U+257F (thin/heavy/double,
+    square/rounded corners, solid/dotted/dashed/long-dashed,
+    ortogonal/diagonal stroke).
+  • Navigation using the Arrow keys
+  • Drawing pen using Ctrl + Arrows
+  • Toggle visual stroke selector using the Tab key
+  • Selection using Shift + Arrow keys
+  • Sticky selection using Ctrl + Space
+  • Border around selection using Return
+  • Clear selection using Backspace, Delete or 0
+  • Keys '-', 'o', '=' and 'b' to select the most common strokes
+    ╶────╴, ═════ and ╺━━━━━╸
+    where 'o' selects the single stroke with rounded corners.
+  • Diagonals and cross using the keys '\', '/' and 'x'
+  • Block characters, semigraphics (originally from the Sinclair ZX80
+    computer, released in 1980) using the numeric keys (numpad 1-9)
+  • Full block of different shades of gray using key '5' repeatedly
+      ██ ▓▓ ▒▒ ░░
+  • Automatically truncates trailing whitespace
+  • Help popup on 'h' key
+  • Keyboard hints in status bar
+  • Cursor coordinates in status bar
+  • Selection size in status bar
+  • Copy, cut and paste using the X clipboard (^C, ^X, ^V)
+  • Insert arrow head using '^', 'v', '>', '<'; press again for variations
+  • Bullets, squares and stars using the ',', '.' and '*' keys; repeat for
+    variations
+  • Multi-line brackets '()[]{}' from the Misc. Technical Unicode block
+  • Multi-line integral sign using 'S'
+  • Text input mode (INSERT)
+
+╭──────╮
+│ TODO │
+╰──────╯
+
+  • Improvements to cut and paste regarding the border connections
+  • Load file from command line
+  • Save file (^S)
+  • Open file (^O)
+  • Scroll
+  • Insert/delete line or column
+  • Erase line without erasing crossing lines (ALT + ARROW keys)
+  • Move selected: m = copy & paste floating; then ARROWS to move, SPACE to
+    drop
+  • Multi-area selection, non-rectangular selections (vague idea)
+  • Proper man page
+
+╭─────────╮
+│ License │
+╰─────────╯
+
+GNU GPL 3+
+
+╭────────╮
+│ Author │
+╰────────╯
+
+Written by Viktor Söderqvist, 2019
