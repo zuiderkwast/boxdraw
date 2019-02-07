@@ -1026,6 +1026,16 @@ sub copy_selection() {
     return $floating_lines;
 }
 
+sub paste_at_selection($) {
+    my $strs = shift;
+    # TODO: Merge with existing outer box drawing parts
+    my $r = $y1;
+    for (my $i = 0; $i < @$strs; $i++) {
+        my $s = $$strs[$i];
+        set_substr_at_yx($s, $r++, $x1);
+    }
+}
+
 sub move_selection_left() {
     for (my $r = $y1; $r <= $y2; $r++) {
         my $str = get_substr_at_yx($r, $x1, $x2 - $x1 + 1);
@@ -1151,20 +1161,46 @@ sub handle_text_input($) {
     }
 }
 
+sub get_xclip_path() {
+    state $xclip = do {
+        my $x = `which xclip`;
+        if ($x) {
+            chomp $x;
+        } else {
+            message("Install xclip to use the X clipboard");
+        }
+        $x;
+    };
+    return $xclip;
+}
+
 # sends an array ref to xclip, if it's installed
 sub copy_to_xclip($) {
-    state $xclip = `which xclip`;
-    if ($xclip) {
-        chomp $xclip;
-        open my $XCLIP, '|-', $xclip, '-selection', 'clipboard'
-            or die "Couldn't open pipe to $xclip: $!";
-        my $lines_ref = shift;
-        print $XCLIP join("\n", @$lines_ref);
-        close $XCLIP;
-        message("Copied to X clipboard");
-    } else {
-        message("Install xclip to copy to the X clipboard");
+    my $xclip = get_xclip_path();
+    return unless $xclip;
+    open my $XCLIP, '|-', $xclip, '-selection', 'clipboard'
+        or die "Couldn't open pipe to $xclip: $!";
+    my $lines_ref = shift;
+    print $XCLIP join("\n", @$lines_ref);
+    close $XCLIP;
+    message("Copied to X clipboard");
+}
+
+# returns an array ref of lines from the clipboard
+sub paste_from_xclip() {
+    my $xclip = get_xclip_path();
+    return unless $xclip;
+    chomp $xclip;
+    open my $XCLIP, '-|', $xclip, '-o', '-selection', 'clipboard'
+        or die "Couldn't open pipe to $xclip: $!";
+    my $lines = [];
+    while (<$XCLIP>) {
+        chomp;
+        push @$lines, $_;
     }
+    close $XCLIP;
+    message("Pasted from X clipboard");
+    return $lines;
 }
 
 sub select_stroke($) {
@@ -1212,17 +1248,22 @@ sub handle_input($) {
     } elsif ($_ eq "\x1a") {
         message("Undo is not implemented");
     } elsif ($_ eq "\x18") {
-        message("Cut to clipboard is not implemented");
+        my $copied_lines = copy_selection();
+        if ($copied_lines) {
+            copy_to_xclip($copied_lines);
+            # TODO: Keep outer box drawing parts
+            fill_selection(" ");
+        }
     } elsif ($_ eq "\x03") {
         my $copied_lines = copy_selection();
         if ($copied_lines) {
-            copy_to_xclip($copied_lines) or
-                message("Install xclip to copy to the X clipboard");
+            copy_to_xclip($copied_lines);
         } else {
             message("Press q to quit");
         }
     } elsif ($_ eq "\x16") {
-        message("Paste from clipboard is not implemented");
+        my $paste_lines = paste_from_xclip();
+        paste_at_selection($paste_lines) if $paste_lines;
     } elsif ($_ eq "x") {
         draw_diagonal("X");
     } elsif ($_ eq "/") {
