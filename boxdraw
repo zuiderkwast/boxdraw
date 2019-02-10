@@ -1,4 +1,4 @@
-#!/usr/bin/perl
+#!/usr/bin/perl -T
 
 # boxdraw - a plain text drawing program for the terminal
 # Copyright (C) 2019  Viktor Söderqvist
@@ -84,6 +84,7 @@ while ($_ = shift) {
     die "Unrecognized option: $_";
 }
 $show_splash = 0 if defined $filename;
+$ENV{PATH} = '/usr/bin:/bin';
 
 sub debug {
     print STDERR @_ if $debug;
@@ -1161,25 +1162,13 @@ sub handle_text_input($) {
     }
 }
 
-sub get_xclip_path() {
-    state $xclip = do {
-        my $x = `which xclip`;
-        if ($x) {
-            chomp $x;
-        } else {
-            message("Install xclip to use the X clipboard");
-        }
-        $x;
-    };
-    return $xclip;
-}
-
 # sends an array ref to xclip, if it's installed
 sub copy_to_xclip($) {
-    my $xclip = get_xclip_path();
-    return unless $xclip;
-    open my $XCLIP, '|-', $xclip, '-selection', 'clipboard'
-        or die "Couldn't open pipe to $xclip: $!";
+    open my $XCLIP, '|-', 'xclip', '-selection', 'clipboard' or do {
+        debug("Couldn't open pipe to xclip: $!");
+        message("Install xclip to use the X clipboard");
+        return;
+    };
     my $lines_ref = shift;
     print $XCLIP join("\n", @$lines_ref);
     close $XCLIP;
@@ -1188,11 +1177,11 @@ sub copy_to_xclip($) {
 
 # returns an array ref of lines from the clipboard
 sub paste_from_xclip() {
-    my $xclip = get_xclip_path();
-    return unless $xclip;
-    chomp $xclip;
-    open my $XCLIP, '-|', $xclip, '-o', '-selection', 'clipboard'
-        or die "Couldn't open pipe to $xclip: $!";
+    open my $XCLIP, '-|', 'xclip', '-o', '-selection', 'clipboard' or do {
+        debug("Couldn't open pipe to xclip: $!");
+        message("Install xclip to use the X clipboard");
+        return;
+    };
     my $lines = [];
     while (<$XCLIP>) {
         chomp;
