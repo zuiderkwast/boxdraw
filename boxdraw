@@ -21,7 +21,6 @@ use warnings;
 use utf8;
 use 5.18.0;
 use open qw(:std :utf8);
-
 my ($cols, $lines);       # size of terminal
 my ($x, $y) = (1, 1);     # cursor coordinates, 1-based
 my ($selx, $sely);        # selection starting point or (under, undef)
@@ -111,6 +110,7 @@ use sigtrap qw(stack-trace error-signals);
 END {
     system "stty sane";
     print "\e[?25h"; # show the cursor
+    print "\e[?2004l"; # bracketed paste mode off
     print "\n";
 };
 
@@ -374,6 +374,7 @@ sub render() {
     } elsif ($selector eq 'stroke') {
         render_stroke_selector();
     }
+    print "\e[?2004h"; # bracketed paste mode on
     flush STDOUT;
 }
 
@@ -1036,6 +1037,10 @@ sub paste_at_selection($) {
     my $r = $y1;
     for (my $i = 0; $i < @$strs; $i++) {
         my $s = $$strs[$i];
+        my $debug = $s;
+        $debug =~ s/\e/\\e/g;
+        $debug =~ s/([\x00-\x1f])/"(" . ord($1) . ")"/eg;
+        debug("Pasting '$debug' at $r:$x1\n");
         set_substr_at_yx($s, $r++, $x1);
     }
 }
@@ -1206,6 +1211,34 @@ sub select_stroke($) {
     die "Stroke $name doesn't exist"; # shouldn't happen
 }
 
+# Read input until the end-of-paste escape sequence and return the lines
+sub get_bracketed_paste() {
+    my $lines = [];
+    my $line = "";
+    while (1) {
+        $_ = get_input_sequence();
+        if (/^[\e]/) {
+            last if $_ eq "\e[201~";
+            s/\e/\\e/g;
+            debug("Unexpected escape sequence in bracketed paste mode: '$_'\n");
+        } elsif (/[\r\n\v\f]/) {
+            push @$lines, $line;
+            $line = "";
+        } elsif ($_ eq "\t") { # add spaces up to a column divisible by 8
+            $line .= " " x (8 - (length($line) % 8));
+        } elsif (/^[\x00-\x1f]$/) {
+            my $ord = ord($_);
+            debug(sprintf("Unexpected control character " .
+                          "in bracketed paste mode: ^%s (0x%x)\n",
+                          chr($ord + 64), $ord));
+        } else {
+            $line .= $_;
+        }
+    }
+    push @$lines, $line if $line ne "";
+    return $lines if @$lines;
+}
+
 # input in drawing mode when no stroke selector is open
 sub handle_input($) {
     $_ = shift;
@@ -1369,6 +1402,12 @@ sub handle_input($) {
         message("Press h again to close the help box");
         print "\e[?25l"; # hide cursor
         $mode = "help";
+    } elsif ($_ eq "\e[200~") {
+        my $strs = get_bracketed_paste();
+        if ($strs) {
+            paste_at_selection($strs);
+            message("Pasted using terminal emulator");
+        }
     } elsif (/^\e/) {
         s/\e/\\e/g;
         debug("Unhandled escape sequence: $_\n");
@@ -1452,6 +1491,7 @@ sub get_input_sequence() {
 }
 
 system "stty raw -echo";
+print "\e[?2004h\n"; # bracketed paste mode on
 update_window_size();
 # center cursor
 $x1 = $x2 = $x = int($cols / 2);

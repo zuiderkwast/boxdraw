@@ -51,6 +51,7 @@ Copy it to e.g. /usr/local/bin/
   • Cursor coordinates in status bar
   • Selection size in status bar
   • Copy, cut and paste using the X clipboard (^C, ^X, ^V)
+  • Rectangular paste (using bracketed paste mode)
   • Insert arrow head using '^', 'v', '>', '<'; press again for variations
   • Bullets, squares and stars using the ',', '.' and '*' keys; repeat for
     variations
@@ -68,7 +69,6 @@ Copy it to e.g. /usr/local/bin/
   • Add arrow heads and bullets/stars to help boxes
   • Improvements to cut and paste regarding the border connections
   • Undo (^Z) and redo (^Y) (Shift+Ctrl+z isn't detectable)
-  • Bracketed paste mode
   • Load file from command line
   • Save file (^S)
   • Open file (^O)
