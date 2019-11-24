@@ -89,8 +89,14 @@ sub debug {
     print STDERR @_ if $debug;
 }
 
+sub safe_backticks(@) {
+    open my $fd, "-|", @_ or die "Can't execute $_[0]";
+    local $/ = undef;
+    return <$fd>;
+}
+
 sub update_window_size() {
-    my $stty = `stty -F/dev/tty -a`;
+    my $stty = safe_backticks qw(stty -F/dev/tty -a);
     $stty =~ /rows (\d+); columns (\d+)/ or die "Can't get terminal size";
     $cols = int $2;
     $lines = int $1;
@@ -106,12 +112,14 @@ sub winch() {
 use sigtrap 'handler', \&winch, 'WINCH';
 use sigtrap qw(die normal-signals);
 use sigtrap qw(stack-trace error-signals);
+system qw(tput smcup); # alternate screen
 
 END {
-    system "stty sane";
+    system qw(stty sane);
     print "\e[?25h"; # show the cursor
     print "\e[?2004l"; # bracketed paste mode off
-    print "\n";
+    #print "\n";
+    system qw(tput rmcup); # exit alternate screen
 };
 
 # --- rendering ---
@@ -360,8 +368,13 @@ sub render_content() {
 }
 
 sub render() {
-    # clear screen
-    print "\ec";
+    # Clear screen
+    print "\e[2J"; # Erase in Display
+    #"\ec" Reset to Initial State (too brutal)
+
+    # TODO: Move show cursor to where it should be, e.g. when closing
+    # help box, etc. It was implicitly here when we did "\ec".
+    print "\e[?25h"; # show the cursor
 
     render_content();
     render_status_bar();
@@ -374,7 +387,6 @@ sub render() {
     } elsif ($selector eq 'stroke') {
         render_stroke_selector();
     }
-    print "\e[?2004h"; # bracketed paste mode on
     flush STDOUT;
 }
 
@@ -1490,7 +1502,7 @@ sub get_input_sequence() {
     }
 }
 
-system "stty raw -echo";
+system qw(stty raw -echo);
 print "\e[?2004h\n"; # bracketed paste mode on
 update_window_size();
 # center cursor
