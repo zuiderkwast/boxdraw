@@ -14,6 +14,7 @@ A drawing program for the terminal
   • Perl 5.18 or later
   • A terminal with colors, UTF-8 character encoding and a font supporting
     the box-drawing characters
+  • Optional: xclip, for integration with the X clipboard
 
 ╭──────────────╮
 │ Installation │
@@ -61,11 +62,20 @@ Copy it to e.g. /usr/local/bin/
 │ TODO │
 ╰──────╯
 
+  • Fixed menu in status bar
+  • Add text mode to help boxes
+  • Add multi-line brackets to help boxes
+  • Add arrow heads and bullets/stars to help boxes
   • Improvements to cut and paste regarding the border connections
+  • Undo (^Z) and redo (^Y) (Shift+Ctrl+z isn't detectable)
+  • Bracketed paste mode
   • Load file from command line
   • Save file (^S)
   • Open file (^O)
-  • Scroll
+  • Scroll at window edges
+  • Scroll using pgup/pgdn
+  • Internal cut/copy/paste buffer when xclip isn't installed
+  • Paste as floating selection (different color; drop with RETURN or SPACE)
   • Insert/delete line or column
   • Erase line without erasing crossing lines (ALT + ARROW keys)
   • Move selected: m = copy & paste floating; then ARROWS to move, SPACE to
